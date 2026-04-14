@@ -13,14 +13,21 @@
   "main": "lib/main.js",
   "renderer": "lib/renderer.js",
   "license": "MIT",
+  "files": [
+    "lib",
+    "icon.svg"
+  ],
   "engines": {
     "local-by-flywheel": ">=6.5.2"
   },
   "scripts": {
-    "build": "webpack --config webpack.config.js",
-    "watch": "webpack --config webpack.config.js --watch",
-    "build:main": "webpack --config webpack.config.js --env target=main",
-    "build:renderer": "webpack --config webpack.config.js --env target=renderer"
+    "build":          "webpack --config webpack.config.js",
+    "build:prod":     "webpack --config webpack.config.js --env mode=production",
+    "watch":          "webpack --config webpack.config.js --watch",
+    "build:main":     "webpack --config webpack.config.js --env target=main",
+    "build:renderer": "webpack --config webpack.config.js --env target=renderer",
+    "clean":          "node -e \"require('fs').rmSync('lib',{recursive:true,force:true});require('fs').mkdirSync('lib',{recursive:true})\"",
+    "prepack":        "npm run build:prod"
   },
   "peerDependencies": {
     "react": ">=16.4.0",

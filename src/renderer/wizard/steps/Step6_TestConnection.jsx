@@ -19,16 +19,19 @@ const STATUS = {
 export default function Step6_TestConnection({ data, onChange, onNext, onBack }) {
   const [status, setStatus] = useState(STATUS.IDLE);
   const [errorMsg, setErrorMsg] = useState(null);
+  const [cmdOutput, setCmdOutput] = useState(null);
 
   async function runTest() {
     setStatus(STATUS.TESTING);
     setErrorMsg(null);
+    setCmdOutput(null);
 
     try {
       const result = await testSSHConnectionDirect(data);
 
       if (result.success) {
         onChange({ connectionTestPassed: true });
+        setCmdOutput((result.data && result.data.output) || null);
         setStatus(STATUS.SUCCESS);
       } else {
         onChange({ connectionTestPassed: false });
@@ -103,10 +106,18 @@ export default function Step6_TestConnection({ data, onChange, onNext, onBack })
         )}
 
         {status === STATUS.SUCCESS && (
-          <div className="sgd-alert" style={{ background: '#d4edda', border: '1px solid #c3e6cb', color: '#155724' }}>
-            <strong>✓ Connection successful.</strong> Your SSH key is working
-            and the server is reachable. You can now save this profile.
-          </div>
+          <>
+            <div className="sgd-alert" style={{ background: '#d4edda', border: '1px solid #c3e6cb', color: '#155724' }}>
+              <strong>✓ Connection successful.</strong> Your SSH key is working
+              and the server is reachable. You can now save this profile.
+            </div>
+            {cmdOutput && (
+              <div className="sgd-ssh-probe">
+                <div className="sgd-ssh-probe__label">Server response (<code>pwd &amp;&amp; whoami</code>)</div>
+                <pre className="sgd-ssh-probe__output">{cmdOutput}</pre>
+              </div>
+            )}
+          </>
         )}
 
         {status === STATUS.FAILED && (

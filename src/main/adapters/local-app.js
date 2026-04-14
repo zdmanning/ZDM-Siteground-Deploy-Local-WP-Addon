@@ -87,6 +87,20 @@ function getSiteLocalDomain(siteId) {
 }
 
 /**
+ * Get the filesystem path to the WordPress installation root (contains wp-config.php).
+ * This is one level above wp-content: {site.path}/app/public
+ * @param {string} siteId
+ * @returns {string|null}
+ */
+function getSiteWpPath(siteId) {
+  const site = getSite(siteId);
+  if (!site) return null;
+  return site.path
+    ? require('path').join(site.path, 'app', 'public')
+    : null;
+}
+
+/**
  * Get the filesystem path to the site's wp-content folder.
  * @param {string} siteId
  * @returns {string|null}
@@ -122,5 +136,6 @@ module.exports = {
   getAllSites,
   getSite,
   getSiteLocalDomain,
+  getSiteWpPath,
   getSiteWpContentPath,
 };

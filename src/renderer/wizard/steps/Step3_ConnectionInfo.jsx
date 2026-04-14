@@ -7,6 +7,9 @@ import React, { useState } from 'react';
 import FormField from '../../components/FormField';
 import { validateConnectionForm, isFormValid } from '../../utils/validate';
 
+const WEB_ROOT_PREFIX = '/home/customer/www/';
+const WEB_ROOT_SUFFIX = '/public_html';
+
 export default function Step3_ConnectionInfo({ data, onChange, onNext, onBack }) {
   // Only show errors after the first submit attempt
   const [submitted, setSubmitted] = useState(false);
@@ -21,6 +24,13 @@ export default function Step3_ConnectionInfo({ data, onChange, onNext, onBack })
       onNext();
     }
   }
+
+  const webRootMiddle = (() => {
+    let v = data.remoteWebRoot || '';
+    if (v.startsWith(WEB_ROOT_PREFIX)) v = v.slice(WEB_ROOT_PREFIX.length);
+    if (v.endsWith(WEB_ROOT_SUFFIX))   v = v.slice(0, v.length - WEB_ROOT_SUFFIX.length);
+    return v.replace(/\/$/, '');
+  })();
 
   function field(name) {
     return {
@@ -113,18 +123,26 @@ export default function Step3_ConnectionInfo({ data, onChange, onNext, onBack })
         <FormField
           id="sgd-webroot"
           label="Remote web root path"
-          hint="The absolute path to your site's public_html folder on the server."
+          hint="Just enter your domain name, e.g. example.com"
           error={errors.remoteWebRoot}
           required
         >
-          <input
-            id="sgd-webroot"
-            type="text"
-            placeholder="/home/customer/www/example.com/public_html"
-            autoComplete="off"
-            spellCheck={false}
-            {...field('remoteWebRoot')}
-          />
+          <div className="sgd-input-with-prefix">
+            <span className="sgd-input-prefix">/home/customer/www/</span>
+            <input
+              id="sgd-webroot"
+              type="text"
+              placeholder="example.com"
+              autoComplete="off"
+              spellCheck={false}
+              value={webRootMiddle}
+              onChange={(e) => {
+                const mid = e.target.value.replace(/\/$/, '');
+                onChange({ remoteWebRoot: mid ? WEB_ROOT_PREFIX + mid + WEB_ROOT_SUFFIX : WEB_ROOT_PREFIX });
+              }}
+            />
+            <span className="sgd-input-suffix">/public_html</span>
+          </div>
         </FormField>
 
         <FormField

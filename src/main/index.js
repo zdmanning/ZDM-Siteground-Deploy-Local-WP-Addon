@@ -80,30 +80,75 @@ module.exports = function (context) {
   // ─── SSH ───────────────────────────────────────────────────────────────────
 
   ipcMain.handle('sgd:ssh:test', async (_e, profileId) => {
-    const profile = profileStore.getProfile(profileId);
-    if (!profile) return { success: false, error: 'Profile not found.' };
-    return sshService.testConnection(profile);
+    const profileResult = profileStore.getProfileById(profileId);
+    if (!profileResult.success) return profileResult;
+    const profile = profileResult.data;
+
+    const runId = `conn-${Date.now().toString(36)}`;
+    logger.startRun(profileId, 'connection_test', runId, {
+      host: `${profile.sshHost}:${profile.sshPort || 18765}`,
+      user: profile.sshUser,
+    });
+
+    const result = await sshService.testConnection(profile);
+
+    logger.appendEntry(profileId, {
+      level:      result.success ? 'success' : 'error',
+      runId,
+      actionType: 'connection_test',
+      message:    result.success
+        ? `Connected to ${result.data.host} as ${result.data.user}`
+        : `Connection failed: ${result.error}`,
+      metadata: result.success
+        ? { host: result.data.host, output: result.data.output }
+        : { error: result.error },
+    });
+
+    logger.finishRun(
+      profileId, runId,
+      result.success ? 'success' : 'failure',
+      result.success ? { host: result.data.host } : { error: result.error }
+    );
+
+    return result;
   });
 
-  // Test SSH without a saved profile — accepts raw profile data from the wizard
+  // Test SSH without a saved profile — accepts raw profile data from the wizard.
+  // Only sshHost, sshPort, sshUser, and keyId are used; all other fields are ignored.
   ipcMain.handle('sgd:ssh:test:direct', async (_e, profileData) => {
-    return sshService.testConnection(profileData);
+    if (!profileData || !profileData.sshHost || !profileData.sshUser || !profileData.keyId) {
+      return { success: false, error: 'SSH host, username, and key ID are required.' };
+    }
+    const safe = {
+      sshHost: profileData.sshHost,
+      sshPort: profileData.sshPort,
+      sshUser: profileData.sshUser,
+      keyId:   profileData.keyId,
+    };
+    return sshService.testConnection(safe);
   });
 
   // ─── Deploy ────────────────────────────────────────────────────────────────
 
+  // Preflight: returns local/remote path info for the deploy config screen.
+  ipcMain.handle('sgd:deploy:preflight', async (_e, profileId, targets) => {
+    return deployService.getPreflightInfo(profileId, targets);
+  });
+
   // Deploy events are streamed back via IPC push (sgd:log:entry),
   // not as a single resolved value.
   ipcMain.handle('sgd:deploy:code', async (event, profileId, options) => {
-    const profile = profileStore.getProfile(profileId);
-    return deployService.runCodeDeploy(profile, options, (entry) => {
+    const profileResult = profileStore.getProfileById(profileId);
+    if (!profileResult.success) return profileResult;
+    return deployService.runCodeDeploy(profileResult.data, options, (entry) => {
       event.sender.send('sgd:log:entry', entry);
     });
   });
 
   ipcMain.handle('sgd:deploy:full', async (event, profileId, options) => {
-    const profile = profileStore.getProfile(profileId);
-    return deployService.runFullDeploy(profile, options, (entry) => {
+    const profileResult = profileStore.getProfileById(profileId);
+    if (!profileResult.success) return profileResult;
+    return deployService.runFullDeploy(profileResult.data, options, (entry) => {
       event.sender.send('sgd:log:entry', entry);
     });
   });
@@ -116,6 +161,14 @@ module.exports = function (context) {
 
   ipcMain.handle('sgd:logs:clear', async (_e, profileId) => {
     return logger.clearLog(profileId);
+  });
+
+  ipcMain.handle('sgd:logs:runs', async (_e, profileId) => {
+    return logger.getRuns(profileId);
+  });
+
+  ipcMain.handle('sgd:logs:run-entries', async (_e, profileId, runId) => {
+    return logger.getRunEntries(profileId, runId);
   });
 
   // ─── Local site info (via adapter) ─────────────────────────────────────────

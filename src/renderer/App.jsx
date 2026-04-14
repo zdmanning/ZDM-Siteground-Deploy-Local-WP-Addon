@@ -78,6 +78,7 @@ export default function App({ site }) {
             site={site}
             onNewProfile={() => navigate('wizard')}
             onSelectProfile={(profileId) => navigate('profile-detail', { profileId })}
+            onDeploy={(profileId) => navigate('deploy', { profileId })}
             onSettings={() => navigate('settings')}
           />
         );

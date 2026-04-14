@@ -53,6 +53,9 @@ export const testSSHConnectionDirect = (profileData) =>
 
 // ─── Deploy ───────────────────────────────────────────────────────────────────
 
+export const deployPreflight = (profileId, targets) =>
+  ipcRenderer.invoke('sgd:deploy:preflight', profileId, targets);
+
 export const runCodeDeploy = (profileId, options) =>
   ipcRenderer.invoke('sgd:deploy:code', profileId, options);
 
@@ -61,8 +64,10 @@ export const runFullDeploy = (profileId, options) =>
 
 // ─── Logs ─────────────────────────────────────────────────────────────────────
 
-export const getLogs = (profileId) => ipcRenderer.invoke('sgd:logs:list', profileId);
-export const clearLogs = (profileId) => ipcRenderer.invoke('sgd:logs:clear', profileId);
+export const getLogs       = (profileId)        => ipcRenderer.invoke('sgd:logs:list', profileId);
+export const clearLogs     = (profileId)        => ipcRenderer.invoke('sgd:logs:clear', profileId);
+export const getRuns       = (profileId)        => ipcRenderer.invoke('sgd:logs:runs', profileId);
+export const getRunEntries = (profileId, runId) => ipcRenderer.invoke('sgd:logs:run-entries', profileId, runId);
 
 /**
  * Subscribe to real-time log entries streamed during a deploy.

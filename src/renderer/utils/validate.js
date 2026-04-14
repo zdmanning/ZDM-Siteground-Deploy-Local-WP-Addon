@@ -41,9 +41,9 @@ export function validateConnectionForm(data) {
     errors.sshUser = 'Required.';
   }
 
-  // Remote web root — must be an absolute path
-  if (!data.remoteWebRoot?.trim()) {
-    errors.remoteWebRoot = 'Required.';
+  // Remote web root — must be an absolute path with something between prefix and suffix
+  if (!data.remoteWebRoot?.trim() || data.remoteWebRoot.trim() === '/home/customer/www/') {
+    errors.remoteWebRoot = 'Enter your domain name, e.g. example.com';
   } else if (!data.remoteWebRoot.trim().startsWith('/')) {
     errors.remoteWebRoot =
       'Must be an absolute Unix path starting with / ' +
