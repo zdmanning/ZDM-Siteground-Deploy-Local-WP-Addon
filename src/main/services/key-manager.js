@@ -43,7 +43,7 @@
 const path = require('path');
 const fs   = require('fs');
 const { app }                 = require('electron');
-const { generateKeyPairSync } = require('crypto');
+const { generateKeyPair: cryptoGenerateKeyPair } = require('crypto');
 
 // ─── Directory helpers ────────────────────────────────────────────────────────
 
@@ -197,10 +197,16 @@ async function generateSshKeyPairForProfile(keyId) {
   try {
     ensureKeyStorageDirectory();
 
-    // Generate in DER format — fixed-offset extraction is more reliable than PEM parsing
-    const { publicKey: pubDer, privateKey: privDer } = generateKeyPairSync('ed25519', {
-      publicKeyEncoding:  { type: 'spki',  format: 'der' },
-      privateKeyEncoding: { type: 'pkcs8', format: 'der' },
+    // Generate in DER format — async so we never block Local's main process thread.
+    // Using sync was causing Local's MySQL service heartbeat to miss its window.
+    const { publicKey: pubDer, privateKey: privDer } = await new Promise((resolve, reject) => {
+      cryptoGenerateKeyPair('ed25519', {
+        publicKeyEncoding:  { type: 'spki',  format: 'der' },
+        privateKeyEncoding: { type: 'pkcs8', format: 'der' },
+      }, (err, pub, priv) => {
+        if (err) reject(err);
+        else resolve({ publicKey: pub, privateKey: priv });
+      });
     });
 
     // SPKI  Ed25519 DER: 12-byte ASN.1 header + 32-byte public key
