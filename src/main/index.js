@@ -62,11 +62,15 @@ module.exports = function (context) {
   // ─── Keys ──────────────────────────────────────────────────────────────────
 
   ipcMain.handle('sgd:keys:generate', async (_e, keyId) => {
-    return keyManager.generateKeyPair(keyId);
+    return keyManager.generateSshKeyPairForProfile(keyId);
   });
 
   ipcMain.handle('sgd:keys:getPublic', async (_e, keyId) => {
-    return keyManager.getPublicKey(keyId);
+    return keyManager.getPublicKeyContents(keyId);
+  });
+
+  ipcMain.handle('sgd:keys:exists', async (_e, keyId) => {
+    return keyManager.keyPairExists(keyId);
   });
 
   ipcMain.handle('sgd:keys:delete', async (_e, keyId) => {

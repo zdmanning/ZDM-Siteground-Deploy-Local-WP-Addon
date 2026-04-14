@@ -30,9 +30,10 @@ export const validateProfile = (data, isUpdate) => ipcRenderer.invoke('sgd:profi
 
 // ─── Keys ─────────────────────────────────────────────────────────────────────
 
-export const generateKey = (keyId) => ipcRenderer.invoke('sgd:keys:generate', keyId);
+export const generateKey  = (keyId) => ipcRenderer.invoke('sgd:keys:generate', keyId);
 export const getPublicKey = (keyId) => ipcRenderer.invoke('sgd:keys:getPublic', keyId);
-export const deleteKey = (keyId) => ipcRenderer.invoke('sgd:keys:delete', keyId);
+export const keyExists    = (keyId) => ipcRenderer.invoke('sgd:keys:exists',    keyId);
+export const deleteKey    = (keyId) => ipcRenderer.invoke('sgd:keys:delete',    keyId);
 
 // ─── SSH ──────────────────────────────────────────────────────────────────────
 

@@ -29,7 +29,11 @@ export default function Step4_KeyGen({ data, onChange, onNext, onBack }) {
     setError(null);
     try {
       const result = await generateKey(data.keyId);
-      onChange({ publicKey: result.publicKey });
+      if (result && result.success === false) {
+        throw new Error(result.error || 'Key generation failed.');
+      }
+      const { publicKey } = (result && result.data) ? result.data : result;
+      onChange({ publicKey });
       setStatus(STATUS.DONE);
     } catch (err) {
       setStatus(STATUS.ERROR);
