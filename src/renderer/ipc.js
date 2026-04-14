@@ -1,0 +1,72 @@
+/**
+ * IPC Bridge
+ *
+ * Thin wrapper around Electron's ipcRenderer.invoke / ipcRenderer.on.
+ * All renderer-to-main communication goes through this module.
+ * Never call ipcRenderer directly outside of this file.
+ */
+
+// Use require() — not window.require() — so webpack's external config resolves
+// this to Electron's real ipcRenderer (same as the reference add-on pattern).
+// eslint-disable-next-line import/no-commonjs
+const { ipcRenderer } = require('electron');
+
+// ─── Profiles ─────────────────────────────────────────────────────────────────
+
+export const listProfiles = () => ipcRenderer.invoke('sgd:profiles:list');
+export const getProfile = (id) => ipcRenderer.invoke('sgd:profiles:get', id);
+export const saveProfile = (profile) => ipcRenderer.invoke('sgd:profiles:save', profile);
+export const deleteProfile = (id) => ipcRenderer.invoke('sgd:profiles:delete', id);
+
+// ─── Keys ─────────────────────────────────────────────────────────────────────
+
+export const generateKey = (keyId) => ipcRenderer.invoke('sgd:keys:generate', keyId);
+export const getPublicKey = (keyId) => ipcRenderer.invoke('sgd:keys:getPublic', keyId);
+export const deleteKey = (keyId) => ipcRenderer.invoke('sgd:keys:delete', keyId);
+
+// ─── SSH ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Test SSH using a saved profile ID (used from profile detail view).
+ */
+export const testSSHConnection = (profileId) =>
+  ipcRenderer.invoke('sgd:ssh:test', profileId);
+
+/**
+ * Test SSH using raw profile data — no save required.
+ * Used during the wizard so we can test before committing to storage.
+ * @param {object} profileData  wizard data object with sshHost, sshPort, etc.
+ */
+export const testSSHConnectionDirect = (profileData) =>
+  ipcRenderer.invoke('sgd:ssh:test:direct', profileData);
+
+// ─── Deploy ───────────────────────────────────────────────────────────────────
+
+export const runCodeDeploy = (profileId, options) =>
+  ipcRenderer.invoke('sgd:deploy:code', profileId, options);
+
+export const runFullDeploy = (profileId, options) =>
+  ipcRenderer.invoke('sgd:deploy:full', profileId, options);
+
+// ─── Logs ─────────────────────────────────────────────────────────────────────
+
+export const getLogs = (profileId) => ipcRenderer.invoke('sgd:logs:list', profileId);
+export const clearLogs = (profileId) => ipcRenderer.invoke('sgd:logs:clear', profileId);
+
+/**
+ * Subscribe to real-time log entries streamed during a deploy.
+ * Returns an unsubscribe function.
+ *
+ * @param {function} callback - called with each log entry
+ * @returns {function} unsubscribe
+ */
+export function onLogEntry(callback) {
+  const handler = (_event, entry) => callback(entry);
+  ipcRenderer.on('sgd:log:entry', handler);
+  return () => ipcRenderer.removeListener('sgd:log:entry', handler);
+}
+
+// ─── Local sites ──────────────────────────────────────────────────────────────
+
+export const getAllLocalSites = () => ipcRenderer.invoke('sgd:local:sites');
+export const getLocalSite = (siteId) => ipcRenderer.invoke('sgd:local:site', siteId);

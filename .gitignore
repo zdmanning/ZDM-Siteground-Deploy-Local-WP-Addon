@@ -1,0 +1,16 @@
+# Build output — compiled by webpack, not committed
+lib/
+
+# Dependencies — restored via npm install
+node_modules/
+
+# Generated keys — never commit private keys
+src/main/services/keys/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.swp
