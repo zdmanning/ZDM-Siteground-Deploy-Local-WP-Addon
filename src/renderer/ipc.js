@@ -13,10 +13,20 @@ const { ipcRenderer } = require('electron');
 
 // ─── Profiles ─────────────────────────────────────────────────────────────────
 
-export const listProfiles = () => ipcRenderer.invoke('sgd:profiles:list');
-export const getProfile = (id) => ipcRenderer.invoke('sgd:profiles:get', id);
-export const saveProfile = (profile) => ipcRenderer.invoke('sgd:profiles:save', profile);
-export const deleteProfile = (id) => ipcRenderer.invoke('sgd:profiles:delete', id);
+/** Returns { success, data: Array<profile> } */
+export const listProfiles    = ()          => ipcRenderer.invoke('sgd:profiles:list');
+/** Returns { success, data: profile } */
+export const getProfile      = (id)        => ipcRenderer.invoke('sgd:profiles:get', id);
+/** Returns { success, data: profile } | { success: false, error, errors? } */
+export const createProfile   = (data)      => ipcRenderer.invoke('sgd:profiles:create', data);
+/** Returns { success, data: profile } | { success: false, error, errors? } */
+export const updateProfile   = (id, patch) => ipcRenderer.invoke('sgd:profiles:update', id, patch);
+/** Legacy wizard save — routes to create or update internally */
+export const saveProfile     = (profile)   => ipcRenderer.invoke('sgd:profiles:save', profile);
+/** Returns { success, data: { deleted: true } } */
+export const deleteProfile   = (id)        => ipcRenderer.invoke('sgd:profiles:delete', id);
+/** Returns { valid, errors } — no write */
+export const validateProfile = (data, isUpdate) => ipcRenderer.invoke('sgd:profiles:validate', data, isUpdate);
 
 // ─── Keys ─────────────────────────────────────────────────────────────────────
 

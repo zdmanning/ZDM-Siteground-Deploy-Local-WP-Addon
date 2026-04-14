@@ -23,7 +23,10 @@ export default function Step7_SaveProfile({ data, onChange, onNext, onBack }) {
     setStatus(STATUS.SAVING);
     setError(null);
     try {
-      const saved = await saveProfile(data);
+      const result = await saveProfile(data);
+      // saveProfile now returns { success, data: profile } or { success: false, error }
+      const saved = result.data || result;
+      if (result.success === false) throw new Error(result.error || 'Save failed.');
       onChange({ id: saved.id });
       setStatus(STATUS.DONE);
     } catch (err) {

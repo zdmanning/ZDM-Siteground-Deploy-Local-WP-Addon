@@ -22,21 +22,41 @@ module.exports = function (context) {
   localAdapter.init(context);
 
   // ─── Profiles ──────────────────────────────────────────────────────────────
+  // All handlers return { success, data } or { success, error, errors? }
+  // so the renderer can handle results uniformly without try/catch.
 
   ipcMain.handle('sgd:profiles:list', async () => {
-    return profileStore.listProfiles();
+    return profileStore.getProfiles();
   });
 
   ipcMain.handle('sgd:profiles:get', async (_e, id) => {
-    return profileStore.getProfile(id);
+    return profileStore.getProfileById(id);
   });
 
+  ipcMain.handle('sgd:profiles:create', async (_e, data) => {
+    return profileStore.createProfile(data);
+  });
+
+  ipcMain.handle('sgd:profiles:update', async (_e, id, patch) => {
+    return profileStore.updateProfile(id, patch);
+  });
+
+  // Legacy save channel — used by the wizard's Step7_SaveProfile.
+  // Routes to create or update based on whether an id is present.
   ipcMain.handle('sgd:profiles:save', async (_e, profile) => {
-    return profileStore.saveProfile(profile);
+    if (profile.id) {
+      const { id, ...patch } = profile;
+      return profileStore.updateProfile(id, patch);
+    }
+    return profileStore.createProfile(profile);
   });
 
   ipcMain.handle('sgd:profiles:delete', async (_e, id) => {
     return profileStore.deleteProfile(id);
+  });
+
+  ipcMain.handle('sgd:profiles:validate', async (_e, data, isUpdate) => {
+    return profileStore.validateProfileData(data, isUpdate);
   });
 
   // ─── Keys ──────────────────────────────────────────────────────────────────

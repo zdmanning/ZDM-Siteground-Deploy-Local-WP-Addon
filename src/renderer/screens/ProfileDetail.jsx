@@ -8,7 +8,7 @@ export default function ProfileDetail({ profileId, onDeploy, onViewLogs, onBack 
   const [testError, setTestError] = useState(null);
 
   useEffect(() => {
-    getProfile(profileId).then(setProfile);
+    getProfile(profileId).then((result) => setProfile(result.data || result));
   }, [profileId]);
 
   async function handleTest() {

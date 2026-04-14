@@ -6,8 +6,8 @@ export default function Dashboard({ site, onNewProfile, onSelectProfile, onSetti
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    listProfiles().then((list) => {
-      setProfiles(list);
+    listProfiles().then((result) => {
+      setProfiles(result.data || result);
       setLoading(false);
     });
   }, []);

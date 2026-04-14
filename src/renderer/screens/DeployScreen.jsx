@@ -18,7 +18,7 @@ export default function DeployScreen({ profileId, onViewLogs, onBack }) {
   const logRef = useRef(null);
 
   useEffect(() => {
-    getProfile(profileId).then(setProfile);
+    getProfile(profileId).then((result) => setProfile(result.data || result));
   }, [profileId]);
 
   // Subscribe to real-time log streaming
