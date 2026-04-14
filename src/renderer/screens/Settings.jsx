@@ -1,6 +1,18 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { deleteOrphanedKeys } from '../ipc';
 
 export default function Settings({ onBack }) {
+  const [keyStatus, setKeyStatus] = useState(null);  // null | 'running' | { deleted: number } | { error: string }
+
+  async function handleClearOrphanedKeys() {
+    setKeyStatus('running');
+    const result = await deleteOrphanedKeys();
+    if (result.success) {
+      setKeyStatus({ deleted: result.data.deleted });
+    } else {
+      setKeyStatus({ error: result.error });
+    }
+  }
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
@@ -32,6 +44,30 @@ export default function Settings({ onBack }) {
           Generated key pairs are stored in Local's data directory on this machine.
           Private keys never leave this computer.
         </p>
+      </div>
+
+      <div className="sgd-card">
+        <p style={{ margin: '0 0 4px', fontWeight: 600 }}>Clear orphaned keys</p>
+        <p style={{ margin: '0 0 12px', fontSize: 12, color: '#6c757d' }}>
+          Deletes any key files on disk that no longer have a matching profile.
+          Keys belonging to existing profiles are never touched.
+        </p>
+        <button
+          className="sgd-btn sgd-btn--danger sgd-btn--sm"
+          onClick={handleClearOrphanedKeys}
+          disabled={keyStatus === 'running'}
+        >
+          {keyStatus === 'running' ? 'Clearing…' : 'Clear Orphaned Keys'}
+        </button>
+        {keyStatus && keyStatus !== 'running' && (
+          <p style={{ margin: '8px 0 0', fontSize: 12, color: keyStatus.error ? '#dc3545' : '#28a745' }}>
+            {keyStatus.error
+              ? `Error: ${keyStatus.error}`
+              : keyStatus.deleted === 0
+                ? 'No orphaned keys found.'
+                : `Cleared ${keyStatus.deleted} orphaned key${keyStatus.deleted !== 1 ? 's' : ''}.`}
+          </p>
+        )}
       </div>
 
       {/* Placeholder for future settings */}

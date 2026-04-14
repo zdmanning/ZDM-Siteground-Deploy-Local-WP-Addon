@@ -28,6 +28,8 @@ export default function App({ site }) {
   const [view, setView] = useState('dashboard');
   // Context passed between views (e.g. selected profile id)
   const [viewParams, setViewParams] = useState({});
+  // Collapsed panel state
+  const [minimized, setMinimized] = useState(false);
 
   const navigate = useCallback((targetView, params = {}) => {
     setView(targetView);
@@ -86,13 +88,15 @@ export default function App({ site }) {
   };
 
   return (
-    <div className="sgd-app">
+    <div className={`sgd-app${minimized ? ' sgd-app--minimized' : ''}`}>
       <Header
         currentView={view}
+        minimized={minimized}
+        onToggleMinimize={() => setMinimized((m) => !m)}
         onHome={() => navigate('dashboard')}
         onSettings={() => navigate('settings')}
       />
-      <main className="sgd-main">{renderView()}</main>
+      {!minimized && <main className="sgd-main">{renderView()}</main>}
     </div>
   );
 }

@@ -52,6 +52,7 @@ module.exports = function (context) {
   });
 
   ipcMain.handle('sgd:profiles:delete', async (_e, id) => {
+    await keyManager.deleteKeyPair(id);
     return profileStore.deleteProfile(id);
   });
 
@@ -75,6 +76,14 @@ module.exports = function (context) {
 
   ipcMain.handle('sgd:keys:delete', async (_e, keyId) => {
     return keyManager.deleteKeyPair(keyId);
+  });
+
+  ipcMain.handle('sgd:keys:deleteOrphaned', async () => {
+    const profilesResult = profileStore.getProfiles();
+    const knownIds = profilesResult.success
+      ? profilesResult.data.map(p => p.id)
+      : [];
+    return keyManager.deleteOrphanedKeys(knownIds);
   });
 
   // ─── SSH ───────────────────────────────────────────────────────────────────

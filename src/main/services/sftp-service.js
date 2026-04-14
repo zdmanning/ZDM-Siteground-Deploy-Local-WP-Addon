@@ -48,7 +48,7 @@ async function uploadFile(profile, localPath, remotePath, onProgress) {
 
   let privateKey;
   try {
-    privateKey = fs.readFileSync(privateKeyPath, 'utf8');
+    privateKey = await fs.promises.readFile(privateKeyPath, 'utf8');
   } catch (err) {
     return _err(`Cannot read SSH private key: ${err.message}`);
   }

@@ -316,6 +316,40 @@ function deleteKeyPair(keyId) {
   }
 }
 
+/**
+ * Delete key files for any keyId that is NOT in the knownProfileIds set.
+ * Safe to call when profiles are in an inconsistent state — it never touches
+ * keys that belong to a live profile.
+ *
+ * @param {string[]} knownProfileIds  Array of profile IDs that still exist.
+ * @returns {{ success: true, data: { deleted: number } } |
+ *           { success: false, error: string }}
+ */
+function deleteOrphanedKeys(knownProfileIds) {
+  try {
+    const dir = ensureKeyStorageDirectory();
+    const known = new Set(Array.isArray(knownProfileIds) ? knownProfileIds : []);
+    const files = fs.readdirSync(dir);
+
+    // Collect unique base IDs (filenames without .pub extension)
+    const ids = new Set(files.map(f => f.endsWith('.pub') ? f.slice(0, -4) : f));
+
+    let deleted = 0;
+    for (const id of ids) {
+      if (!known.has(id)) {
+        const priv = privateKeyPath(id);
+        const pub  = publicKeyPath(id);
+        if (fs.existsSync(priv)) { fs.unlinkSync(priv); deleted++; }
+        if (fs.existsSync(pub))  { fs.unlinkSync(pub); }
+      }
+    }
+
+    return _ok({ deleted });
+  } catch (err) {
+    return _err(`Failed to delete orphaned keys: ${err.message}`);
+  }
+}
+
 // ─── Legacy aliases (preserved for existing IPC handlers) ────────────────────
 
 /**
@@ -346,6 +380,7 @@ module.exports = {
   getPrivateKeyPath,
   keyPairExists,
   deleteKeyPair,
+  deleteOrphanedKeys,
 
   // ── Path accessors (used by profile-store to embed paths in profile records) ─
   privateKeyPath,

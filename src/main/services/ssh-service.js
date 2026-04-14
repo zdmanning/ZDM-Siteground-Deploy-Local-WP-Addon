@@ -36,7 +36,7 @@ const keyManager = require('./key-manager');
  * @returns {object}  ssh2 ConnectConfig
  * @throws {Error}    if the private key file is missing
  */
-function _buildConnectConfig(profile) {
+async function _buildConnectConfig(profile) {
   const privateKeyPath = keyManager.getPrivateKeyPath(profile.keyId);
   if (!privateKeyPath) {
     const e = new Error(
@@ -49,7 +49,7 @@ function _buildConnectConfig(profile) {
 
   let privateKey;
   try {
-    privateKey = fs.readFileSync(privateKeyPath, 'utf8');
+    privateKey = await fs.promises.readFile(privateKeyPath, 'utf8');
   } catch (err) {
     const e = new Error(`Cannot read private key file: ${err.message}`);
     e.code = 'KEY_READ_ERROR';
@@ -173,18 +173,19 @@ function _err(error) { return { success: false, error }; }
  *   { success: false, error: string }
  * >}
  */
-function testConnection(profile) {
-  return new Promise((resolve) => {
-    if (!profile || !profile.sshHost || !profile.sshUser) {
-      return resolve(_err('SSH host and username are required.'));
-    }
+async function testConnection(profile) {
+  if (!profile || !profile.sshHost || !profile.sshUser) {
+    return _err('SSH host and username are required.');
+  }
 
-    let config;
-    try {
-      config = _buildConnectConfig(profile);
-    } catch (err) {
-      return resolve(_err(_friendlyError(err, { host: profile.sshHost })));
-    }
+  let config;
+  try {
+    config = await _buildConnectConfig(profile);
+  } catch (err) {
+    return _err(_friendlyError(err, { host: profile.sshHost }));
+  }
+
+  return new Promise((resolve) => {
 
     const conn     = new Client();
     let   settled  = false;
@@ -250,14 +251,15 @@ function testConnection(profile) {
  * @param {function} [onData]  Called with each stdout/stderr chunk
  * @returns {Promise<{ success: true, data: { exitCode: number } } | { success: false, error: string }>}
  */
-function execCommand(profile, command, onData) {
+async function execCommand(profile, command, onData) {
+  let config;
+  try {
+    config = await _buildConnectConfig(profile);
+  } catch (err) {
+    return _err(_friendlyError(err, { host: profile.sshHost }));
+  }
+
   return new Promise((resolve) => {
-    let config;
-    try {
-      config = _buildConnectConfig(profile);
-    } catch (err) {
-      return resolve(_err(_friendlyError(err, { host: profile.sshHost })));
-    }
 
     const conn = new Client();
 
@@ -292,11 +294,11 @@ function execCommand(profile, command, onData) {
  * @param {object} profile
  * @returns {Promise<{ success: true, data: { exec: Function, end: Function } } | { success: false, error: string }>}
  */
-function openConnection(profile) {
-  return new Promise((resolve) => {
+async function openConnection(profile) {
+  return new Promise(async (resolve) => {
     let config;
     try {
-      config = _buildConnectConfig(profile);
+      config = await _buildConnectConfig(profile);
     } catch (err) {
       return resolve(_err(_friendlyError(err, { host: profile.sshHost })));
     }
