@@ -50,10 +50,12 @@ export default function App({ site }) {
       case 'profile-detail':
         return (
           <ProfileDetail
+            key={viewParams.profileId}
             profileId={viewParams.profileId}
             onDeploy={(profileId) => navigate('deploy', { profileId })}
             onViewLogs={(profileId) => navigate('logs', { profileId })}
             onBack={() => navigate('dashboard')}
+            onCloned={(newProfileId) => navigate('profile-detail', { profileId: newProfileId })}
           />
         );
       case 'deploy':

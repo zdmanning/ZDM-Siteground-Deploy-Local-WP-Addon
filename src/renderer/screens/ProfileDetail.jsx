@@ -3,6 +3,9 @@ import {
   getProfile,
   updateProfile,
   deleteProfile,
+  createProfile,
+  getLocalSite,
+  getAllLocalSites,
   testSSHConnection,
   repairLocalSiteMysql,
   deleteRemoteBackups,
@@ -188,6 +191,157 @@ function RemoteBackupsPanel({ profile }) {
           <strong>Deletion failed:</strong> {result.error}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Clone panel ─────────────────────────────────────────────────────────────
+
+function ClonePanel({ profile, onCloned, onCancel }) {
+  const [fields, setFields] = useState({
+    name:          `Copy of ${profile.name}`,
+    remoteWebRoot: profile.remoteWebRoot || '',
+    localSiteId:   profile.localSiteId   || '',
+  });
+  const [localSites, setLocalSites] = useState(null); // null = loading
+  const [errors,     setErrors]     = useState({});
+  const [saving,     setSaving]     = useState(false);
+  const [saveErr,    setSaveErr]    = useState(null);
+
+  useEffect(() => {
+    getAllLocalSites()
+      .then((sites) => {
+        // getAllSites returns a plain array (no wrapper object)
+        setLocalSites(Array.isArray(sites) ? sites : (sites?.data ?? []));
+      })
+      .catch(() => setLocalSites([]));
+  }, []);
+
+  function set(key, val) {
+    setFields((f) => ({ ...f, [key]: val }));
+    setErrors((e) => ({ ...e, [key]: undefined }));
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setSaveErr(null);
+    setErrors({});
+
+    const data = {
+      name:          fields.name.trim(),
+      sshHost:       profile.sshHost,
+      sshPort:       profile.sshPort,
+      sshUser:       profile.sshUser,
+      remoteWebRoot: fields.remoteWebRoot.trim(),
+      keyId:         profile.keyId,
+      localSiteId:   fields.localSiteId || null,
+      deployMode:    profile.deployMode,
+    };
+
+    const res = await createProfile(data);
+
+    if (res.success === false) {
+      if (res.errors) setErrors(res.errors);
+      setSaveErr(res.error || 'Clone failed. Check the fields above.');
+      setSaving(false);
+      return;
+    }
+
+    onCloned((res.data || res).id);
+  }
+
+  const displayWebRoot = (() => {
+    let v = fields.remoteWebRoot || '';
+    if (v.startsWith('/home/customer/www/')) v = v.slice('/home/customer/www/'.length);
+    if (v.endsWith('/public_html')) v = v.slice(0, v.length - '/public_html'.length);
+    return v.replace(/\/$/, '');
+  })();
+
+  const siteOptions = localSites
+    ? localSites.slice().sort((a, b) => a.name.localeCompare(b.name))
+    : [];
+
+  return (
+    <div className="sgd-detail__edit-form">
+      <SectionTitle>Clone profile</SectionTitle>
+      <p style={{ marginBottom: 16, fontSize: 13, color: '#6c757d' }}>
+        Creates a new profile that shares the same SSH credentials and key.
+        Change the name, remote domain, and which Local site to link.
+      </p>
+
+      <FormField id="cl-name" label="New profile name" error={errors.name} required>
+        <input
+          id="cl-name"
+          type="text"
+          value={fields.name}
+          onChange={(e) => set('name', e.target.value)}
+          autoComplete="off"
+        />
+      </FormField>
+
+      <FormField
+        id="cl-root"
+        label="Remote web root"
+        error={errors.remoteWebRoot}
+        hint="The domain name of the new remote site"
+        required
+      >
+        <div className="sgd-input-with-prefix">
+          <span className="sgd-input-prefix">/home/customer/www/</span>
+          <input
+            id="cl-root"
+            type="text"
+            value={displayWebRoot}
+            onChange={(e) => {
+              const mid = e.target.value.replace(/\/$/, '');
+              set('remoteWebRoot', mid ? '/home/customer/www/' + mid + '/public_html' : '/home/customer/www/');
+            }}
+            placeholder="newsite.com"
+          />
+          <span className="sgd-input-suffix">/public_html</span>
+        </div>
+      </FormField>
+
+      <FormField
+        id="cl-site"
+        label="Linked Local site"
+        hint="Which Local WP site deploys to this profile"
+      >
+        {localSites === null ? (
+          <div style={{ fontSize: 13, color: '#6c757d' }}>
+            <span className="sgd-spinner sgd-spinner--sm" style={{ marginRight: 6 }} />
+            Loading sites…
+          </div>
+        ) : (
+          <select
+            id="cl-site"
+            value={fields.localSiteId}
+            onChange={(e) => set('localSiteId', e.target.value)}
+          >
+            <option value="">— None —</option>
+            {siteOptions.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}{s.domain ? ` (${s.domain})` : ''}
+              </option>
+            ))}
+          </select>
+        )}
+      </FormField>
+
+      {saveErr && (
+        <div className="sgd-alert sgd-alert--danger" style={{ marginBottom: 12 }}>
+          {saveErr}
+        </div>
+      )}
+
+      <div className="sgd-detail__edit-actions">
+        <button className="sgd-btn sgd-btn--primary" onClick={handleSave} disabled={saving || localSites === null}>
+          {saving ? 'Cloning…' : 'Create clone'}
+        </button>
+        <button className="sgd-btn sgd-btn--secondary" onClick={onCancel} disabled={saving}>
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }
@@ -386,22 +540,33 @@ function EditForm({ profile, onSaved, onCancel }) {
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
-export default function ProfileDetail({ profileId, onDeploy, onViewLogs, onBack }) {
+export default function ProfileDetail({ profileId, onDeploy, onViewLogs, onBack, onCloned }) {
   const [profile,     setProfile]     = useState(null);
   const [loading,     setLoading]     = useState(true);
   const [loadErr,     setLoadErr]     = useState(null);
-  const [mode,        setMode]        = useState('view'); // view | edit | delete
+  const [mode,        setMode]        = useState('view'); // view | edit | delete | clone
+  const [siteName,    setSiteName]    = useState(null);
 
-  const load = useCallback(() => {
+  const load = useCallback(async () => {
     setLoading(true);
     setLoadErr(null);
-    getProfile(profileId)
-      .then((result) => {
-        if (result.success === false) throw new Error(result.error || 'Profile not found.');
-        setProfile(result.data || result);
-      })
-      .catch((err) => setLoadErr(err.message))
-      .finally(() => setLoading(false));
+    try {
+      const result = await getProfile(profileId);
+      if (result.success === false) throw new Error(result.error || 'Profile not found.');
+      const p = result.data || result;
+      setProfile(p);
+      if (p.localSiteId) {
+        try {
+          const siteRes = await getLocalSite(p.localSiteId);
+          const name = siteRes?.data?.name || siteRes?.name;
+          if (name) setSiteName(name);
+        } catch (_) { /* ignore — site name is cosmetic */ }
+      }
+    } catch (err) {
+      setLoadErr(err.message);
+    } finally {
+      setLoading(false);
+    }
   }, [profileId]);
 
   useEffect(() => { load(); }, [load]);
@@ -452,6 +617,9 @@ export default function ProfileDetail({ profileId, onDeploy, onViewLogs, onBack 
         </div>
         {mode === 'view' && (
           <div className="sgd-detail__header-actions">
+            <button className="sgd-btn sgd-btn--ghost sgd-btn--sm" onClick={() => setMode('clone')}>
+              Clone
+            </button>
             <button className="sgd-btn sgd-btn--ghost sgd-btn--sm" onClick={() => setMode('edit')}>
               Edit
             </button>
@@ -472,6 +640,15 @@ export default function ProfileDetail({ profileId, onDeploy, onViewLogs, onBack 
             <InfoRow label="Username"    value={profile.sshUser}       mono />
             <InfoRow label="Web root"    value={profile.remoteWebRoot} mono />
             <InfoRow label="Deploy mode" value={defaultMode === 'full' ? 'Full deploy (code + database)' : 'Code only (themes + plugins)'} />
+            <InfoRow
+              label="Linked local site"
+              value={
+                profile.localSiteId
+                  ? (siteName ? `${siteName} (${profile.localSiteId})` : profile.localSiteId)
+                  : 'Not linked'
+              }
+              mono={!siteName && !!profile.localSiteId}
+            />
             <InfoRow label="Created"     value={new Date(profile.createdAt).toLocaleString()} />
             <InfoRow
               label="Last deployed"
@@ -507,6 +684,15 @@ export default function ProfileDetail({ profileId, onDeploy, onViewLogs, onBack 
         <EditForm
           profile={profile}
           onSaved={(updated) => { setProfile(updated); setMode('view'); }}
+          onCancel={() => setMode('view')}
+        />
+      )}
+
+      {/* ── Clone mode ────────────────────────────────────────────────────── */}
+      {mode === 'clone' && (
+        <ClonePanel
+          profile={profile}
+          onCloned={(newId) => onCloned(newId)}
           onCancel={() => setMode('view')}
         />
       )}
