@@ -217,9 +217,9 @@ A summary table shows every piece of configuration collected during the wizard. 
 
 | Field | Notes |
 |---|---|
-| Profile name | |
-| SSH host:port | |
-| SSH username | |
+| Profile name | Your saved label for this deployment target |
+| SSH host:port | Verify the server and port before saving |
+| SSH username | The SSH user that will be used for deploys |
 | Remote web root | Shown in monospace — verify this path is correct |
 | SSH key | Ed25519, identified by the first 8 characters of the key ID |
 | Connection test | Shown as `Passed ✓` or `Not tested / skipped` (highlighted amber) |
