@@ -103,6 +103,8 @@
 .sgd-btn--danger    { background: #dc3545; color: #fff; }
 .sgd-btn--ghost     { background: transparent; color: #910C1D; border: 1px solid #910C1D; }
 .sgd-btn--sm        { padding: 4px 10px; font-size: 11px; }
+.sgd-btn--xs        { padding: 2px 7px; font-size: 10px; }
+.sgd-run-card__copy-btn { margin-left: auto; flex-shrink: 0; }
 
 /* ── Cards ─────────────────────────────────────────────────────────────────── */
 .sgd-card {

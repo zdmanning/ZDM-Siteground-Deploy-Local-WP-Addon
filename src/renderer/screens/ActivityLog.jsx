@@ -98,6 +98,19 @@ function RunEntries({ entries }) {
 
 function RunCard({ run, entries, expanded, onToggle }) {
   const dur = _duration(run.durationMs);
+  const [copied, setCopied] = React.useState(false);
+
+  function handleCopy(e) {
+    e.stopPropagation();
+    if (!entries || entries.length === 0) return;
+    const text = entries.map(entry =>
+      `[${new Date(entry.timestamp).toLocaleTimeString()}] [${entry.level}] ${entry.message}`
+    ).join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
 
   return (
     <div className={`sgd-run-card${expanded ? ' sgd-run-card--expanded' : ''}`}>
@@ -146,6 +159,15 @@ function RunCard({ run, entries, expanded, onToggle }) {
               <span className="sgd-run-card__meta-item">
                 <strong>Synced</strong> {run.metadata.synced.join(', ')}
               </span>
+            )}
+            {entries && entries.length > 0 && (
+              <button
+                className="sgd-btn sgd-btn--ghost sgd-btn--xs sgd-run-card__copy-btn"
+                onClick={handleCopy}
+                title="Copy log to clipboard"
+              >
+                {copied ? '✓ Copied' : '⎘ Copy log'}
+              </button>
             )}
           </div>
 

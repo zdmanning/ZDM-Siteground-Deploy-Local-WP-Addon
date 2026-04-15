@@ -1,5 +1,11 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { getProfile, updateProfile, deleteProfile, testSSHConnection } from '../ipc';
+import {
+  getProfile,
+  updateProfile,
+  deleteProfile,
+  testSSHConnection,
+  repairLocalSiteMysql,
+} from '../ipc';
 import FormField from '../components/FormField';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -70,6 +76,68 @@ function SSHTestPanel({ profileId }) {
       {status === 'error' && result && (
         <div className="sgd-alert sgd-alert--danger" style={{ marginTop: 8 }}>
           <strong>Connection failed:</strong> {result.error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LocalMysqlRepairPanel({ profile }) {
+  const [status, setStatus] = useState('idle');
+  const [result, setResult] = useState(null);
+
+  async function runRepair() {
+    if (!profile.localSiteId) return;
+    setStatus('running');
+    setResult(null);
+
+    const res = await repairLocalSiteMysql(profile.localSiteId);
+    setResult(res);
+    setStatus(res.success ? 'done' : 'error');
+  }
+
+  return (
+    <div className="sgd-card sgd-card--compact">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div>
+          <SectionTitle>Local MySQL repair</SectionTitle>
+          <p style={{ margin: '6px 0 0', fontSize: 12, color: '#6c757d' }}>
+            Checks the linked Local site for a stale mysqld process on the wrong port and clears only that site's stale MySQL state.
+          </p>
+        </div>
+        <button
+          className="sgd-btn sgd-btn--ghost sgd-btn--sm"
+          onClick={runRepair}
+          disabled={!profile.localSiteId || status === 'running'}
+        >
+          {status === 'running' ? 'Repairing…' : 'Repair Local MySQL'}
+        </button>
+      </div>
+
+      <div style={{ marginTop: 10, fontSize: 12, color: '#6c757d' }}>
+        Linked Local site ID: <code>{profile.localSiteId || 'Not linked'}</code>
+      </div>
+
+      {!profile.localSiteId && (
+        <div className="sgd-alert sgd-alert--warning" style={{ marginTop: 10 }}>
+          This profile is not linked to a Local site, so the repair action is unavailable.
+        </div>
+      )}
+
+      {result?.success && (
+        <div className="sgd-alert sgd-alert--info" style={{ marginTop: 10 }}>
+          <strong>{result.data.message}</strong>
+          <div style={{ marginTop: 6 }}>
+            Expected port: <code>{result.data.expectedPort}</code>
+            {result.data.stalePorts?.length > 0 ? <> · Cleared stale ports: <code>{result.data.stalePorts.join(', ')}</code></> : null}
+            {result.data.killedPids?.length > 0 ? <> · Killed PIDs: <code>{result.data.killedPids.join(', ')}</code></> : null}
+          </div>
+        </div>
+      )}
+
+      {result && result.success === false && (
+        <div className="sgd-alert sgd-alert--danger" style={{ marginTop: 10 }}>
+          <strong>Repair failed:</strong> {result.error}
         </div>
       )}
     </div>
@@ -385,6 +453,9 @@ export default function ProfileDetail({ profileId, onDeploy, onViewLogs, onBack 
 
           {/* SSH test */}
           <SSHTestPanel profileId={profileId} />
+
+          {/* Local site repair */}
+          <LocalMysqlRepairPanel profile={profile} />
 
           {/* Primary actions */}
           <div className="sgd-detail__actions">

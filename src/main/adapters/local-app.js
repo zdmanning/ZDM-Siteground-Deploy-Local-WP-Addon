@@ -128,7 +128,35 @@ function _normaliseSite(raw) {
     path: raw.path || raw.sitePath || null,
     phpVersion: raw.phpVersion || null,
     mysqlVersion: raw.mysqlVersion || null,
+    mysqlPort: raw.services?.mysql?.ports?.MYSQL || null,
   };
+}
+
+/**
+ * Get the TCP port Local's MySQL service is listening on for a site.
+ * Reads from the site's live my.cnf config in Local's run directory.
+ * This is guaranteed current even if sites.json is stale or ports were reassigned after a restart.
+ * Returns null if unavailable (site not running, older Local version).
+ * @param {string} siteId
+ * @returns {string|null}
+ */
+function getSiteMysqlPort(siteId) {
+  try {
+    const { app } = require('electron');
+    const fs = require('fs');
+    const path = require('path');
+    // Local stores per-run service config at %APPDATA%\Local\run\<siteId>\conf\mysql\my.cnf
+    const cfgPath = path.join(app.getPath('userData'), '..', 'Local', 'run', siteId, 'conf', 'mysql', 'my.cnf');
+    if (!fs.existsSync(cfgPath)) return null;
+
+    const cfg = fs.readFileSync(cfgPath, 'utf8');
+    // Match: port = 10026
+    const m = cfg.match(/^\s*port\s*=\s*(\d+)/m);
+    return m ? m[1] : null;
+  } catch (err) {
+    console.error('[SiteGroundDeploy] getSiteMysqlPort failed:', err.message);
+    return null;
+  }
 }
 
 module.exports = {
@@ -138,4 +166,5 @@ module.exports = {
   getSiteLocalDomain,
   getSiteWpPath,
   getSiteWpContentPath,
+  getSiteMysqlPort,
 };

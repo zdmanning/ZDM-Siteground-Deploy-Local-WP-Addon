@@ -14,6 +14,7 @@ const profileStore = require('./services/profile-store');
 const keyManager = require('./services/key-manager');
 const sshService = require('./services/ssh-service');
 const deployService = require('./services/deploy-service');
+const localMysqlRepairService = require('./services/local-mysql-repair-service');
 const logger = require('./services/logger');
 
 module.exports = function (context) {
@@ -52,7 +53,10 @@ module.exports = function (context) {
   });
 
   ipcMain.handle('sgd:profiles:delete', async (_e, id) => {
-    await keyManager.deleteKeyPair(id);
+    const profileResult = profileStore.getProfileById(id);
+    if (profileResult.success && profileResult.data?.keyId) {
+      await keyManager.deleteKeyPair(profileResult.data.keyId);
+    }
     return profileStore.deleteProfile(id);
   });
 
@@ -80,10 +84,11 @@ module.exports = function (context) {
 
   ipcMain.handle('sgd:keys:deleteOrphaned', async () => {
     const profilesResult = profileStore.getProfiles();
-    const knownIds = profilesResult.success
-      ? profilesResult.data.map(p => p.id)
+    // Keys are stored by keyId, NOT profile id — must compare against keyId
+    const knownKeyIds = profilesResult.success
+      ? profilesResult.data.map(p => p.keyId).filter(Boolean)
       : [];
-    return keyManager.deleteOrphanedKeys(knownIds);
+    return keyManager.deleteOrphanedKeys(knownKeyIds);
   });
 
   // ─── SSH ───────────────────────────────────────────────────────────────────
@@ -188,5 +193,9 @@ module.exports = function (context) {
 
   ipcMain.handle('sgd:local:site', async (_e, siteId) => {
     return localAdapter.getSite(siteId);
+  });
+
+  ipcMain.handle('sgd:local:mysql:repair', async (_e, siteId) => {
+    return localMysqlRepairService.repairSiteMysql(siteId);
   });
 };

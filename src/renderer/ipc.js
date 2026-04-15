@@ -87,3 +87,4 @@ export function onLogEntry(callback) {
 
 export const getAllLocalSites = () => ipcRenderer.invoke('sgd:local:sites');
 export const getLocalSite = (siteId) => ipcRenderer.invoke('sgd:local:site', siteId);
+export const repairLocalSiteMysql = (siteId) => ipcRenderer.invoke('sgd:local:mysql:repair', siteId);

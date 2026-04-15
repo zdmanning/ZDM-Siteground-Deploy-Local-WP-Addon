@@ -423,6 +423,8 @@ async function runFullDeploy(profile, options = {}, onLog) {
   let sshConn = null;
   let _outcome     = 'failure';
   let _outcomeMeta = null;
+  let localTablePrefix = null;
+  let remoteTablePrefix = null;
 
   logger.startRun(pid, 'full_deploy', runId, {
     host: `${profile.sshHost}:${profile.sshPort || 18765}`,
@@ -491,6 +493,13 @@ async function runFullDeploy(profile, options = {}, onLog) {
     if (!dbExportResult.success) {
       return _err(`Local database export failed:\n${dbExportResult.error}`);
     }
+
+    const localPrefixResult = dbSvc.getLocalTablePrefix(profile.localSiteId);
+    if (!localPrefixResult.success) {
+      return _err(`Could not determine the local table prefix:\n${localPrefixResult.error}`);
+    }
+    localTablePrefix = localPrefixResult.data.tablePrefix;
+    emit('info', `Local DB table prefix: ${localTablePrefix}`);
 
     // ── 4. Create local archive ───────────────────────────────────────────────
     const localArchivePath = archiverSvc.getTempArchivePath(runId);
@@ -575,6 +584,13 @@ async function runFullDeploy(profile, options = {}, onLog) {
       return _err(`Remote database backup failed:\n${backupResult.error}`);
     }
 
+    const remotePrefixResult = await dbSvc.getRemoteTablePrefix(sshConn, remoteWebRoot);
+    if (!remotePrefixResult.success) {
+      return _err(`Could not determine the remote table prefix:\n${remotePrefixResult.error}`);
+    }
+    remoteTablePrefix = remotePrefixResult.data.tablePrefix;
+    emit('info', `Remote DB table prefix: ${remoteTablePrefix} (${remotePrefixResult.data.source || 'unknown source'})`);
+
     // ── 9. Extract archive on remote ──────────────────────────────────────────
     emit('info', '── Extracting archive on remote…');
     let unzipOut = '';
@@ -626,6 +642,50 @@ async function runFullDeploy(profile, options = {}, onLog) {
       emit('warning', `Remote DB backup is at: ${dbBackupPath}`);
       emit('info',    `Manual import: wp db import ${remoteSqlPath} --path=${_q(remoteWebRoot)} --allow-root`);
     } else {
+      if (localTablePrefix && remoteTablePrefix && localTablePrefix !== remoteTablePrefix) {
+        emit('warning', `Remote table prefix mismatch detected: ${remoteTablePrefix} -> ${localTablePrefix}`);
+
+        const prefixUpdateResult = await dbSvc.updateRemoteTablePrefix(
+          sshConn,
+          remoteWebRoot,
+          localTablePrefix,
+          dbLog
+        );
+
+        if (!prefixUpdateResult.success) {
+          return _err(
+            `Database imported, but remote wp-config still points at ${remoteTablePrefix} tables.\n` +
+            `${prefixUpdateResult.error}\n\n` +
+            `Remote DB backup: ${dbBackupPath}`
+          );
+        }
+
+      }
+
+      const activeTablePrefix = localTablePrefix || remoteTablePrefix;
+      const stalePrefixResult = await dbSvc.getRemoteStaleTablePrefixes(
+        sshConn,
+        remoteWebRoot,
+        activeTablePrefix
+      );
+
+      if (!stalePrefixResult.success) {
+        emit('warning', `Stale table discovery failed (non-fatal): ${stalePrefixResult.error}`);
+      } else {
+        for (const stalePrefix of stalePrefixResult.data.prefixes) {
+          const cleanupResult = await dbSvc.dropRemoteTablesByPrefix(
+            sshConn,
+            remoteWebRoot,
+            stalePrefix,
+            dbLog
+          );
+
+          if (!cleanupResult.success) {
+            emit('warning', `Old ${stalePrefix}* table cleanup failed (non-fatal): ${cleanupResult.error}`);
+          }
+        }
+      }
+
       // ── 12. Search-replace ────────────────────────────────────────────────
       const localDomain = localAdapter.getSiteLocalDomain(profile.localSiteId);
       const prodDomain  = profile.productionDomain || null;
