@@ -11,12 +11,5 @@ Thumbs.db
 *.suo
 *.user
 
-# ── node_modules + lib are intentionally committed ───────────────────────────
-# This add-on lives directly in %APPDATA%\Local\addons\ and is used without
-# an install step. Committing node_modules/ and lib/ means a fresh clone
-# (or copy) is immediately runnable by Local without running `npm install`
-# or `npm run build`.
-#
-# Uncomment the lines below if you adopt a CI pipeline that builds from source:
-# node_modules/
-# lib/
+# ── Dependencies (never commit — too large for GitHub, npm install restores) ──
+node_modules/
