@@ -1723,3 +1723,128 @@ code.sgd-profile-card__info-val {
   margin-left: 4px;
   flex-shrink: 0;
 }
+
+/* ─── Full deploy — exclude directories ─────────────────────────────────────── */
+
+.sgd-deploy-exclude {
+  background: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+
+.sgd-deploy-exclude__title {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 6px;
+  color: #212529;
+}
+
+.sgd-deploy-exclude__hint {
+  font-size: 12px;
+  color: #6c757d;
+  margin: 0 0 10px;
+}
+
+.sgd-deploy-exclude__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sgd-deploy-exclude__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  user-select: none;
+}
+
+.sgd-deploy-exclude__checkbox {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  accent-color: #dc3545;
+  flex-shrink: 0;
+}
+
+.sgd-deploy-exclude__name {
+  font-family: monospace;
+  font-size: 12px;
+  color: #212529;
+}
+
+.sgd-deploy-exclude__summary {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #dc3545;
+}
+
+/* ── Archive format picker ─────────────────────────────────────────────────── */
+.sgd-deploy-format-picker__title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sgd-deploy-format-picker__hint {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--text-muted, #888);
+}
+
+.sgd-deploy-format-picker__options {
+  display: flex;
+  gap: 10px;
+}
+
+.sgd-deploy-format-picker__option {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.sgd-deploy-format-picker__option:hover {
+  border-color: var(--accent, #4a90d9);
+}
+
+.sgd-deploy-format-picker__option--active {
+  border-color: var(--accent, #4a90d9);
+  background-color: rgba(74, 144, 217, 0.08);
+}
+
+.sgd-deploy-format-picker__option input[type="radio"] {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.sgd-deploy-format-picker__option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sgd-deploy-format-picker__option-body strong {
+  font-size: 13px;
+}
+
+.sgd-deploy-format-picker__desc {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  line-height: 1.4;
+}
+
+/* ── Deploy stop bar ──────────────────────────────────────────────────────── */
+.sgd-deploy-stop-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 0 0;
+}

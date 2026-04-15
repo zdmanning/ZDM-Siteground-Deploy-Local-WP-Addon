@@ -178,6 +178,10 @@ module.exports = function (context) {
     return deployService.deleteRemoteBackups(profileId);
   });
 
+  ipcMain.handle('sgd:deploy:cancel', async (_e, profileId) => {
+    return deployService.cancelDeploy(profileId);
+  });
+
   // ─── Logs ──────────────────────────────────────────────────────────────────
 
   ipcMain.handle('sgd:logs:list', async (_e, profileId) => {

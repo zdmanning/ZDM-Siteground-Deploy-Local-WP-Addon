@@ -52,7 +52,7 @@ export default function App({ site }) {
           <ProfileDetail
             key={viewParams.profileId}
             profileId={viewParams.profileId}
-            onDeploy={(profileId) => navigate('deploy', { profileId })}
+            onDeploy={(profileId, defaultMode) => navigate('deploy', { profileId, defaultMode })}
             onViewLogs={(profileId) => navigate('logs', { profileId })}
             onBack={() => navigate('dashboard')}
             onCloned={(newProfileId) => navigate('profile-detail', { profileId: newProfileId })}
@@ -62,6 +62,7 @@ export default function App({ site }) {
         return (
           <DeployScreen
             profileId={viewParams.profileId}
+            defaultMode={viewParams.defaultMode || 'code'}
             onViewLogs={(profileId) => navigate('logs', { profileId })}
             onBack={() => navigate('profile-detail', { profileId: viewParams.profileId })}
           />
@@ -82,7 +83,7 @@ export default function App({ site }) {
             site={site}
             onNewProfile={() => navigate('wizard')}
             onSelectProfile={(profileId) => navigate('profile-detail', { profileId })}
-            onDeploy={(profileId) => navigate('deploy', { profileId })}
+            onDeploy={(profileId, defaultMode) => navigate('deploy', { profileId, defaultMode })}
             onSettings={() => navigate('settings')}
           />
         );

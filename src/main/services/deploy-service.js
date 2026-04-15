@@ -83,6 +83,31 @@ function _q(p) {
   return "'" + String(p).replace(/'/g, "'\\''") + "'";
 }
 
+// ─── Cancellation ────────────────────────────────────────────────────────────────
+
+class DeployCancelledError extends Error {
+  constructor() {
+    super('Deploy cancelled by user');
+    this.name = 'DeployCancelledError';
+  }
+}
+
+function makeToken() {
+  let rejectFn = null;
+  const cancelPromise = new Promise((_, reject) => { rejectFn = reject; });
+  return {
+    isCancelled:   false,
+    cancelPromise,
+    cancel() {
+      this.isCancelled = true;
+      if (rejectFn) rejectFn(new DeployCancelledError());
+    },
+  };
+}
+
+/** One active deploy token per profile. Maps profileId → token. */
+const activeDeployTokens = new Map();
+
 // ─── Preflight ────────────────────────────────────────────────────────────────
 
 /**
@@ -128,13 +153,26 @@ function getPreflightInfo(profileId, targets) {
     };
   });
 
+  // Discover all subdirectories in wp-content (used for full deploy exclusion UI)
+  let wpContentDirs = [];
+  const wpContentReachable = wpContentPath ? fs.existsSync(wpContentPath) : false;
+  if (wpContentReachable) {
+    try {
+      wpContentDirs = fs.readdirSync(wpContentPath, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name)
+        .sort();
+    } catch (_) { /* non-fatal */ }
+  }
+
   return _ok({
     profileId,
     profileName:        profile.name,
     localSiteId:        siteId,
     localSiteName:      site ? site.name : null,
     wpContentPath:      wpContentPath,
-    wpContentReachable: wpContentPath ? fs.existsSync(wpContentPath) : false,
+    wpContentReachable,
+    wpContentDirs,
     remoteWebRoot:      profile.remoteWebRoot,
     productionDomain:   profile.productionDomain || null,
     sshHost:            `${profile.sshHost}:${profile.sshPort || 18765}`,
@@ -162,9 +200,13 @@ async function runCodeDeploy(profile, options = {}, onLog) {
   const emit  = (lvl, msg, meta) =>
     _emit(lvl, msg, onLog, pid, { runId, actionType: 'code_deploy', profileId: pid, ...(meta && { metadata: meta }) });
 
-  let sshConn = null;
+  let sshConn      = null;
+  let remoteTempDir = null;
   let _outcome     = 'failure';
   let _outcomeMeta = null;
+
+  const token = makeToken();
+  if (pid) activeDeployTokens.set(pid, token);
 
   logger.startRun(pid, 'code_deploy', runId, {
     host: `${profile.sshHost}:${profile.sshPort || 18765}`,
@@ -229,15 +271,16 @@ async function runCodeDeploy(profile, options = {}, onLog) {
     }
 
     // ── 3. Create local archive ──────────────────────────────────────────────
-    const localArchivePath = archiverSvc.getTempArchivePath(runId);
-    emit('info', 'Creating archive…');
+    const archiveFormat    = (options.format === 'tar') ? 'tar' : 'zip';
+    const localArchivePath = archiverSvc.getTempArchivePath(runId, archiveFormat);
+    emit('info', `Creating ${archiveFormat.toUpperCase()} archive…`);
 
     let lastLoggedBucket = -1;
     const archiveResult = await archiverSvc.createArchive(
       sourceItems,
       localArchivePath,
+      archiveFormat,
       ({ bytes, total }) => {
-        // Log a progress line at 0%, 25%, 50%, 75%, 100% of known size
         if (total > 0) {
           const bucket = Math.floor((bytes / total) * 4);
           if (bucket > lastLoggedBucket) {
@@ -258,27 +301,33 @@ async function runCodeDeploy(profile, options = {}, onLog) {
       );
     }
 
-    emit('success', `Archive ready: ${_fmt(archiveResult.data.sizeBytes)}`);
+    emit('success', `${archiveFormat.toUpperCase()} archive ready: ${_fmt(archiveResult.data.sizeBytes)}`);
+    if (token.isCancelled) throw new DeployCancelledError();
 
     // ── 4. Upload archive via SFTP ───────────────────────────────────────────
-    const remoteTempDir    = `/tmp/sgd-deploy-${runId}`;
-    const remoteArchivePath = `${remoteTempDir}/deploy.zip`;
+    remoteTempDir               = `/tmp/sgd-deploy-${runId}`;
+    const remoteArchiveFile     = `deploy.${archiveFormat}`;
+    const remoteArchivePath     = `${remoteTempDir}/${remoteArchiveFile}`;
 
     emit('info', `Uploading to ${profile.sshHost}…`);
     let lastPct = -1;
 
-    const uploadResult = await sftpSvc.uploadFile(
-      profile,
-      localArchivePath,
-      remoteArchivePath,
-      ({ bytes, total, percent }) => {
-        const band = Math.floor(percent / 25) * 25; // 0, 25, 50, 75, 100
-        if (band > lastPct) {
-          lastPct = band;
-          emit('info', `  Upload: ${percent}% (${_fmt(bytes)} / ${_fmt(total)})`);
-        }
-      }
-    );
+    const uploadResult = await Promise.race([
+      sftpSvc.uploadFile(
+        profile,
+        localArchivePath,
+        remoteArchivePath,
+        ({ bytes, total, percent }) => {
+          const band = Math.floor(percent / 25) * 25;
+          if (band > lastPct) {
+            lastPct = band;
+            emit('info', `  Upload: ${percent}% (${_fmt(bytes)} / ${_fmt(total)})`);
+          }
+        },
+        token
+      ),
+      token.cancelPromise,
+    ]);
 
     if (!uploadResult.success) {
       return _err(`Upload failed: ${uploadResult.error}`);
@@ -297,12 +346,16 @@ async function runCodeDeploy(profile, options = {}, onLog) {
     emit('success', 'SSH connection open');
 
     // ── 6. Extract archive on remote ─────────────────────────────────────────
+    if (token.isCancelled) throw new DeployCancelledError();
     emit('info', 'Extracting archive on remote…');
     let unzipOut = '';
-    const unzipResult = await sshConn.exec(
-      `unzip -o -d ${_q(remoteTempDir)} ${_q(remoteArchivePath)} 2>&1`,
-      (chunk) => { unzipOut += chunk; }
-    );
+    const extractCmd = archiveFormat === 'tar'
+      ? `mkdir -p ${_q(remoteTempDir)} && tar xf ${_q(remoteArchivePath)} -C ${_q(remoteTempDir)} 2>&1`
+      : `unzip -o -d ${_q(remoteTempDir)} ${_q(remoteArchivePath)} 2>&1`;
+    const unzipResult = await Promise.race([
+      sshConn.exec(extractCmd, (chunk) => { unzipOut += chunk; }),
+      token.cancelPromise,
+    ]);
 
     if (unzipResult.exitCode !== 0) {
       const tail = unzipOut.trim().split('\n').slice(-5).join('\n');
@@ -317,14 +370,13 @@ async function runCodeDeploy(profile, options = {}, onLog) {
     const remoteWebRoot = remoteWebRootVal;
 
     for (const item of sourceItems) {
+      if (token.isCancelled) throw new DeployCancelledError();
       const target  = item.archiveName;
       const srcDir  = `${remoteTempDir}/${target}`;
       const destDir = `${remoteWebRoot}/wp-content/${target}`;
 
       emit('info', `Syncing ${target}…`);
 
-      // rsync preferred (faster, delta, --delete removes stale files).
-      // cp fallback for edge cases where rsync is not installed.
       const syncCmd = [
         `if command -v rsync > /dev/null 2>&1; then`,
         `  rsync -az --delete --exclude='.git' ${_q(srcDir + '/')} ${_q(destDir + '/')};`,
@@ -334,7 +386,10 @@ async function runCodeDeploy(profile, options = {}, onLog) {
       ].join(' ');
 
       let syncOut = '';
-      const syncResult = await sshConn.exec(syncCmd, (chunk) => { syncOut += chunk; });
+      const syncResult = await Promise.race([
+        sshConn.exec(syncCmd, (chunk) => { syncOut += chunk; }),
+        token.cancelPromise,
+      ]);
 
       if (syncResult.exitCode !== 0) {
         return _err(
@@ -361,17 +416,27 @@ async function runCodeDeploy(profile, options = {}, onLog) {
     return _ok({ runId, targets: sourceItems.map((i) => i.archiveName) });
 
   } catch (err) {
+    if (err instanceof DeployCancelledError) {
+      emit('warning', '── Deploy cancelled by user ──');
+      _outcome     = 'cancelled';
+      _outcomeMeta = { cancelled: true };
+      if (remoteTempDir) {
+        const cleanConn = sshConn || (await sshService.openConnection(profile).then((r) => r.success ? r.data : null).catch(() => null));
+        if (cleanConn) {
+          try { await cleanConn.exec(`rm -rf ${_q(remoteTempDir)}`); } catch (_) {}
+          if (!sshConn) { try { await cleanConn.end(); } catch (_) {} }
+        }
+      }
+      return _err('Deploy cancelled');
+    }
     _outcomeMeta = { error: err.message };
     emit('error', `Unexpected error: ${err.message}`);
     return _err(`Unexpected error during deploy: ${err.message}`);
 
   } finally {
     logger.finishRun(pid, runId, _outcome, _outcomeMeta);
-    // Always close the SSH connection
-    if (sshConn) {
-      try { await sshConn.end(); } catch (_) {}
-    }
-    // Always delete the local temp archive
+    if (pid) activeDeployTokens.delete(pid);
+    if (sshConn) { try { await sshConn.end(); } catch (_) {} }
     archiverSvc.cleanupLocal(runId);
   }
 }
@@ -420,11 +485,15 @@ async function runFullDeploy(profile, options = {}, onLog) {
     logger.appendEntry(pid, rich);
   };
 
-  let sshConn = null;
-  let _outcome     = 'failure';
-  let _outcomeMeta = null;
+  let sshConn       = null;
+  let remoteTempDir = null;
+  let _outcome      = 'failure';
+  let _outcomeMeta  = null;
   let localTablePrefix = null;
   let remoteTablePrefix = null;
+
+  const token = makeToken();
+  if (pid) activeDeployTokens.set(pid, token);
 
   logger.startRun(pid, 'full_deploy', runId, {
     host: `${profile.sshHost}:${profile.sshPort || 18765}`,
@@ -476,11 +545,25 @@ async function runFullDeploy(profile, options = {}, onLog) {
       return _err('No subdirectories found in local wp-content. Nothing to deploy.');
     }
 
-    const sourceItems = wpDirs.map((name) => ({
+    // Apply exclusions — always exclude the addon's own backup folder, plus any
+    // directories the user explicitly opted out of in the UI.
+    const ALWAYS_EXCLUDE = ['sgd-db-backups'];
+    const userExcludes   = Array.isArray(options.excludeDirs) ? options.excludeDirs : [];
+    const excludeSet     = new Set([...ALWAYS_EXCLUDE, ...userExcludes]);
+
+    const filteredDirs = wpDirs.filter((name) => !excludeSet.has(name));
+    if (filteredDirs.length === 0) {
+      return _err('All wp-content directories are excluded. Nothing to deploy.');
+    }
+    if (userExcludes.length > 0) {
+      emit('info', `Excluded directories: ${userExcludes.join(', ')}`);
+    }
+
+    const sourceItems = filteredDirs.map((name) => ({
       localPath:   path.join(wpContentPath, name),
       archiveName: name,
     }));
-    emit('info', `Directories: ${wpDirs.join(', ')}`);
+    emit('info', `Directories: ${filteredDirs.join(', ')}`);
 
     // ── 3. Export local database ──────────────────────────────────────────────
     emit('info', '── Exporting local database…');
@@ -502,13 +585,15 @@ async function runFullDeploy(profile, options = {}, onLog) {
     emit('info', `Local DB table prefix: ${localTablePrefix}`);
 
     // ── 4. Create local archive ───────────────────────────────────────────────
-    const localArchivePath = archiverSvc.getTempArchivePath(runId);
-    emit('info', '── Creating archive of entire wp-content…');
+    const archiveFormat    = (options.format === 'tar') ? 'tar' : 'zip';
+    const localArchivePath = archiverSvc.getTempArchivePath(runId, archiveFormat);
+    emit('info', `── Creating ${archiveFormat.toUpperCase()} archive of entire wp-content…`);
 
     let lastBucket = -1;
     const archiveResult = await archiverSvc.createArchive(
       sourceItems,
       localArchivePath,
+      archiveFormat,
       ({ bytes, total }) => {
         if (total > 0) {
           const bucket = Math.floor((bytes / total) * 4);
@@ -527,26 +612,32 @@ async function runFullDeploy(profile, options = {}, onLog) {
         'Check that the local wp-content directory is not empty.'
       );
     }
-    emit('success', `Archive ready: ${_fmt(archiveResult.data.sizeBytes)}`);
+    emit('success', `${archiveFormat.toUpperCase()} archive ready: ${_fmt(archiveResult.data.sizeBytes)}`);
+    if (token.isCancelled) throw new DeployCancelledError();
 
     // ── 5. Upload archive via SFTP ────────────────────────────────────────────
-    const remoteTempDir     = `/tmp/sgd-deploy-${runId}`;
-    const remoteArchivePath = `${remoteTempDir}/deploy.zip`;
+    remoteTempDir               = `/tmp/sgd-deploy-${runId}`;
+    const remoteArchiveFile     = `deploy.${archiveFormat}`;
+    const remoteArchivePath     = `${remoteTempDir}/${remoteArchiveFile}`;
 
     emit('info', '── Uploading files…');
     let lastPct = -1;
-    const uploadResult = await sftpSvc.uploadFile(
-      profile,
-      localArchivePath,
-      remoteArchivePath,
-      ({ bytes, total, percent }) => {
-        const band = Math.floor(percent / 25) * 25;
-        if (band > lastPct) {
-          lastPct = band;
-          emit('info', `  Archive upload: ${percent}% (${_fmt(bytes)} / ${_fmt(total)})`);
-        }
-      }
-    );
+    const uploadResult = await Promise.race([
+      sftpSvc.uploadFile(
+        profile,
+        localArchivePath,
+        remoteArchivePath,
+        ({ bytes, total, percent }) => {
+          const band = Math.floor(percent / 25) * 25;
+          if (band > lastPct) {
+            lastPct = band;
+            emit('info', `  Archive upload: ${percent}% (${_fmt(bytes)} / ${_fmt(total)})`);
+          }
+        },
+        token
+      ),
+      token.cancelPromise,
+    ]);
     if (!uploadResult.success) return _err(`Archive upload failed: ${uploadResult.error}`);
     emit('success', 'Archive uploaded');
 
@@ -594,10 +685,10 @@ async function runFullDeploy(profile, options = {}, onLog) {
     // ── 9. Extract archive on remote ──────────────────────────────────────────
     emit('info', '── Extracting archive on remote…');
     let unzipOut = '';
-    const unzipResult = await sshConn.exec(
-      `unzip -o -d ${_q(remoteTempDir)} ${_q(remoteArchivePath)} 2>&1`,
-      (chunk) => { unzipOut += chunk; }
-    );
+    const extractCmd = archiveFormat === 'tar'
+      ? `mkdir -p ${_q(remoteTempDir)} && tar xf ${_q(remoteArchivePath)} -C ${_q(remoteTempDir)} 2>&1`
+      : `unzip -o -d ${_q(remoteTempDir)} ${_q(remoteArchivePath)} 2>&1`;
+    const unzipResult = await sshConn.exec(extractCmd, (chunk) => { unzipOut += chunk; });
     if (unzipResult.exitCode !== 0) {
       const tail = unzipOut.trim().split('\n').slice(-5).join('\n');
       return _err(`Extraction failed (exit ${unzipResult.exitCode}):\n${tail}`);
@@ -606,8 +697,24 @@ async function runFullDeploy(profile, options = {}, onLog) {
 
     // ── 10. Sync all wp-content subdirs ───────────────────────────────────────
     emit('info', '── Syncing wp-content directories…');
+
+    // Only sync dirs that were actually extracted — empty local dirs are
+    // silently skipped by the archiver (zip has no empty-dir entries), so
+    // they won't exist in the remote temp dir and rsync would fail on them.
+    let extractedDirsOut = '';
+    await sshConn.exec(
+      `for d in ${sourceItems.map((i) => _q(`${remoteTempDir}/${i.archiveName}`)).join(' ')}; do [ -d "$d" ] && basename "$d"; done`,
+      (chunk) => { extractedDirsOut += chunk; }
+    );
+    const extractedSet = new Set(extractedDirsOut.trim().split('\n').map((s) => s.trim()).filter(Boolean));
+    const skippedEmpty = sourceItems.filter((i) => !extractedSet.has(i.archiveName)).map((i) => i.archiveName);
+    if (skippedEmpty.length > 0) {
+      emit('info', `  Skipping empty/missing directories: ${skippedEmpty.join(', ')}`);
+    }
+
     for (const item of sourceItems) {
       const subDir  = item.archiveName;
+      if (!extractedSet.has(subDir)) continue; // empty dir — nothing to sync
       const srcDir  = `${remoteTempDir}/${subDir}`;
       const destDir = `${remoteWebRoot}/wp-content/${subDir}`;
       emit('info', `  Syncing ${subDir}…`);
@@ -730,12 +837,26 @@ async function runFullDeploy(profile, options = {}, onLog) {
     });
 
   } catch (err) {
+    if (err instanceof DeployCancelledError) {
+      emit('warning', '── Deploy cancelled by user ──');
+      _outcome     = 'cancelled';
+      _outcomeMeta = { cancelled: true };
+      if (remoteTempDir) {
+        const cleanConn = sshConn || (await sshService.openConnection(profile).then((r) => r.success ? r.data : null).catch(() => null));
+        if (cleanConn) {
+          try { await cleanConn.exec(`rm -rf ${_q(remoteTempDir)}`); } catch (_) {}
+          if (!sshConn) { try { await cleanConn.end(); } catch (_) {} }
+        }
+      }
+      return _err('Deploy cancelled');
+    }
     _outcomeMeta = { error: err.message };
     emit('error', `Unexpected error: ${err.message}`);
     return _err(`Unexpected error: ${err.message}`);
 
   } finally {
     logger.finishRun(pid, runId, _outcome, _outcomeMeta);
+    if (pid) activeDeployTokens.delete(pid);
     if (sshConn) { try { await sshConn.end(); } catch (_) {} }
     archiverSvc.cleanupLocal(runId);
     dbSvc.cleanupLocalSql(runId);
@@ -775,10 +896,24 @@ async function deleteRemoteBackups(profileId) {
   }
 }
 
+/**
+ * Cancel an in-progress deploy for a profile.
+ * Safe to call even if no deploy is running.
+ */
+function cancelDeploy(profileId) {
+  const token = activeDeployTokens.get(profileId);
+  if (token) {
+    token.cancel();
+    return _ok({ cancelled: true });
+  }
+  return _ok({ cancelled: false, reason: 'No active deploy for this profile' });
+}
+
 module.exports = {
   getPreflightInfo,
   runCodeDeploy,
   runFullDeploy,
+  cancelDeploy,
   deleteRemoteBackups,
 };
 

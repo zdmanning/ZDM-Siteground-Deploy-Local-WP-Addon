@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { deployPreflight, runCodeDeploy, runFullDeploy, onLogEntry } from '../ipc';
+import { deployPreflight, runCodeDeploy, runFullDeploy, cancelDeploy, onLogEntry } from '../ipc';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -136,6 +136,90 @@ function TargetCheckbox({ target, label, warning, localExists, disabled, checked
   );
 }
 
+// ─── Full deploy exclusion list ─────────────────────────────────────────────
+
+// Directories the addon always excludes regardless of user choice
+const ALWAYS_EXCLUDED = ['sgd-db-backups'];
+
+// Directories pre-checked as excluded by default (if they exist on the remote)
+const DEFAULT_EXCLUDED = ['backups-dup-lite', 'updraft'];
+
+function ArchiveFormatPicker({ value, onChange }) {
+  return (
+    <div className="sgd-card sgd-deploy-format-picker">
+      <h3 className="sgd-deploy-format-picker__title">Archive format</h3>
+      <p className="sgd-deploy-format-picker__hint">
+        Archive size is shown in the deploy log after it creates.
+      </p>
+      <div className="sgd-deploy-format-picker__options">
+        <label className={`sgd-deploy-format-picker__option${value === 'tar' ? ' sgd-deploy-format-picker__option--active' : ''}`}>
+          <input type="radio" name="archiveFormat" value="tar"
+            checked={value === 'tar'} onChange={() => onChange('tar')} />
+          <div className="sgd-deploy-format-picker__option-body">
+            <strong>TAR</strong>
+            <span className="sgd-deploy-format-picker__desc">No compression — fastest, ideal for large uploads folders</span>
+          </div>
+        </label>
+        <label className={`sgd-deploy-format-picker__option${value === 'zip' ? ' sgd-deploy-format-picker__option--active' : ''}`}>
+          <input type="radio" name="archiveFormat" value="zip"
+            checked={value === 'zip'} onChange={() => onChange('zip')} />
+          <div className="sgd-deploy-format-picker__option-body">
+            <strong>ZIP</strong>
+            <span className="sgd-deploy-format-picker__desc">Compressed — smaller upload, slower to create</span>
+          </div>
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function ExcludeDirectories({ dirs, excluded, onChange }) {
+
+  // Dirs the user can actually toggle (hide the always-excluded ones)
+  const toggleable = dirs.filter((d) => !ALWAYS_EXCLUDED.includes(d));
+
+  function toggle(dir) {
+    onChange(
+      excluded.includes(dir)
+        ? excluded.filter((d) => d !== dir)
+        : [...excluded, dir]
+    );
+  }
+
+  return (
+    <div className="sgd-deploy-exclude">
+      <h4 className="sgd-deploy-exclude__title">Exclude directories from this deploy</h4>
+      <p className="sgd-deploy-exclude__hint">
+        Checked directories will be <strong>skipped</strong> — they won't be zipped or uploaded.
+        Useful for large folders like uploads that haven't changed.
+      </p>
+      <div className="sgd-deploy-exclude__list">
+        {toggleable.map((dir) => (
+          <label key={dir} className="sgd-deploy-exclude__item">
+            <input
+              type="checkbox"
+              checked={excluded.includes(dir)}
+              onChange={() => toggle(dir)}
+              className="sgd-deploy-exclude__checkbox"
+            />
+            <span className="sgd-deploy-exclude__name">{dir}</span>
+            {dir === 'uploads' && (
+              <span className="sgd-deploy-target__badge sgd-deploy-target__badge--warn">
+                ⚠ usually large
+              </span>
+            )}
+          </label>
+        ))}
+      </div>
+      {excluded.length > 0 && (
+        <p className="sgd-deploy-exclude__summary">
+          Skipping: <strong>{excluded.join(', ')}</strong>
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ─── Full deploy danger zone ──────────────────────────────────────────────────
 
 function FullDeployDangerZone({ dbConfirmed, onConfirmChange, productionDomain }) {
@@ -225,16 +309,18 @@ function LogView({ entries, logRef }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function DeployScreen({ profileId, onViewLogs, onBack }) {
+export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBack }) {
   // Preflight state
   const [preflight, setPreflight]               = useState(null);
   const [preflightLoading, setPreflightLoading]  = useState(true);
   const [preflightError, setPreflightError]      = useState(null);
 
   // Config state
-  const [mode, setMode]               = useState('code');       // 'code' | 'full'
+  const [mode, setMode]               = useState(defaultMode === 'full' ? 'full' : 'code');
   const [checked, setChecked]         = useState([...DEFAULT_CHECKED]);
   const [dbConfirmed, setDbConfirmed] = useState(false);
+  const [excludeDirs, setExcludeDirs]     = useState([]);  // dirs to skip in full deploy
+  const [archiveFormat, setArchiveFormat] = useState('zip'); // 'zip' | 'tar'
 
   // Deploy flow state
   const [phase, setPhase]           = useState('config');       // 'config'|'deploying'|'done'
@@ -251,6 +337,12 @@ export default function DeployScreen({ profileId, onViewLogs, onBack }) {
     deployPreflight(profileId, CODE_TARGETS.map((t) => t.key)).then((res) => {
       if (res.success) {
         setPreflight(res.data);
+        // Pre-check any default-excluded folders that actually exist on the remote
+        const dirs = res.data.wpContentDirs || [];
+        setExcludeDirs((prev) => {
+          const toAdd = DEFAULT_EXCLUDED.filter((d) => dirs.includes(d) && !prev.includes(d));
+          return toAdd.length ? [...prev, ...toAdd] : prev;
+        });
       } else {
         setPreflightError(res.error);
       }
@@ -275,6 +367,8 @@ export default function DeployScreen({ profileId, onViewLogs, onBack }) {
   function handleModeChange(m) {
     setMode(m);
     setDbConfirmed(false);
+    setExcludeDirs([]);
+    setArchiveFormat('zip');
   }
 
   function handleCheck(key, isChecked) {
@@ -290,12 +384,16 @@ export default function DeployScreen({ profileId, onViewLogs, onBack }) {
     setPhase('deploying');
 
     const res = mode === 'full'
-      ? await runFullDeploy(profileId, { confirmed: true })
-      : await runCodeDeploy(profileId, { targets: checked });
+      ? await runFullDeploy(profileId, { confirmed: true, excludeDirs, format: archiveFormat })
+      : await runCodeDeploy(profileId, { targets: checked, format: archiveFormat });
 
     setResult(res);
     setRunning(false);
     setPhase('done');
+  }
+
+  function handleStop() {
+    cancelDeploy(profileId);
   }
 
   function handleDeployAgain() {
@@ -303,6 +401,7 @@ export default function DeployScreen({ profileId, onViewLogs, onBack }) {
     setResult(null);
     setLogEntries([]);
     setDbConfirmed(false);
+    setArchiveFormat('zip');
     loadPreflight();
   }
 
@@ -336,11 +435,14 @@ export default function DeployScreen({ profileId, onViewLogs, onBack }) {
 
   // ── Phase: deploying / done ──────────────────────────────────────────────────
   if (phase === 'deploying' || phase === 'done') {
+    const isCancelled = !running && result?.error === 'Deploy cancelled';
     const resultLabel = running
       ? 'deploying…'
-      : result?.success
-        ? 'complete'
-        : 'failed';
+      : isCancelled
+        ? 'cancelled'
+        : result?.success
+          ? 'complete'
+          : 'failed';
 
     return (
       <div className="sgd-deploy-screen">
@@ -348,12 +450,23 @@ export default function DeployScreen({ profileId, onViewLogs, onBack }) {
 
         {/* Result banner */}
         {result && (
-          <div className={`sgd-alert ${result.success ? 'sgd-alert--success' : 'sgd-alert--danger'}`}>
+          <div className={`sgd-alert ${result.success ? 'sgd-alert--success' : isCancelled ? 'sgd-alert--warning' : 'sgd-alert--danger'}`}>
             {result.success
               ? mode === 'full'
                 ? `Full deploy complete — ${(result.data?.synced || []).length} directories synced.`
                 : `Code deploy complete — synced: ${(result.data?.targets || []).join(', ')}`
-              : `Deploy failed: ${result.error}`}
+              : isCancelled
+                ? 'Deploy cancelled. Your site was not changed.'
+                : `Deploy failed: ${result.error}`}
+          </div>
+        )}
+
+        {/* Stop button (shown while running) */}
+        {running && (
+          <div className="sgd-deploy-stop-bar">
+            <button className="sgd-btn sgd-btn--danger sgd-btn--sm" onClick={handleStop}>
+              ■ Stop deploy
+            </button>
           </div>
         )}
 
@@ -430,14 +543,24 @@ export default function DeployScreen({ profileId, onViewLogs, onBack }) {
             </div>
           )}
 
-          {/* ── Full deploy: danger zone ── */}
+          {/* ── Full deploy: exclusion list + danger zone ── */}
           {mode === 'full' && (
-            <FullDeployDangerZone
-              dbConfirmed={dbConfirmed}
-              onConfirmChange={setDbConfirmed}
-              productionDomain={preflight.productionDomain}
-            />
+            <>
+              <ExcludeDirectories
+                dirs={preflight.wpContentDirs || []}
+                excluded={excludeDirs}
+                onChange={setExcludeDirs}
+              />
+              <FullDeployDangerZone
+                dbConfirmed={dbConfirmed}
+                onConfirmChange={setDbConfirmed}
+                productionDomain={preflight.productionDomain}
+              />
+            </>
           )}
+
+          {/* ── Archive format ── */}
+          <ArchiveFormatPicker value={archiveFormat} onChange={setArchiveFormat} />
 
           {/* ── Local source ── */}
           <div className="sgd-card sgd-deploy-info-card">

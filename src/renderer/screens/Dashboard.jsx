@@ -124,7 +124,7 @@ function ProfileCard({ profile, onSelect, onDeploy, onDeleted }) {
       <div className="sgd-profile-card__actions" onClick={stopProp}>
         <button
           className="sgd-btn sgd-btn--primary sgd-btn--sm"
-          onClick={(e) => { e.stopPropagation(); onDeploy(profile.id); }}
+          onClick={(e) => { e.stopPropagation(); onDeploy(profile.id, defaultMode); }}
         >
           Deploy
         </button>

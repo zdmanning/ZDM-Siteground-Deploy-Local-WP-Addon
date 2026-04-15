@@ -63,6 +63,9 @@ export const runCodeDeploy = (profileId, options) =>
 export const runFullDeploy = (profileId, options) =>
   ipcRenderer.invoke('sgd:deploy:full', profileId, options);
 
+export const cancelDeploy = (profileId) =>
+  ipcRenderer.invoke('sgd:deploy:cancel', profileId);
+
 export const deleteRemoteBackups = (profileId) =>
   ipcRenderer.invoke('sgd:deploy:delete-backups', profileId);
 

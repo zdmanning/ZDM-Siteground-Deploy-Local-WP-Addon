@@ -942,6 +942,31 @@ async function clearRemoteCache(sshConn, remoteWebRoot, onLog) {
     _emit('warning', `Elementor CSS flush returned exit ${elRes.exitCode}.`, onLog);
   }
 
+  _emit('info', 'Flushing SiteGround cache…', onLog);
+  let sgOut = '';
+  const sgRes = await sshConn.exec(
+    `wp sg purge --path=${_q(webRoot)} --allow-root 2>&1`,
+    (chunk) => { sgOut += chunk; }
+  );
+
+  if (sgRes.exitCode === 0) {
+    _emit('success', 'SiteGround cache purged', onLog);
+  } else {
+    _emit('warning', `wp sg purge unavailable (sg-cachepress not active) — clearing file cache directly…`, onLog);
+    // Delete the SG file cache directory directly (wp-content/cache/sgo-cache/)
+    const fileCacheDir = webRoot.replace(/\/+$/, '') + '/wp-content/cache/sgo-cache/';
+    let rmOut = '';
+    const rmRes = await sshConn.exec(
+      `rm -rf ${_q(fileCacheDir)} 2>&1 && echo "OK"`,
+      (chunk) => { rmOut += chunk; }
+    );
+    if (rmRes.exitCode === 0 && rmOut.includes('OK')) {
+      _emit('success', 'SiteGround file cache cleared', onLog);
+    } else {
+      _emit('warning', `File cache clear returned exit ${rmRes.exitCode}: ${rmOut.trim()}`, onLog);
+    }
+  }
+
   return _ok({});
 }
 

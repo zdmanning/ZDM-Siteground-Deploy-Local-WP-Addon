@@ -38,19 +38,21 @@ function _err(error) { return { success: false, error }; }
 // ─── Archive creation ──────────────────────────────────────────────────────────
 
 /**
- * Create a zip archive from an array of source directory descriptors.
+ * Create a zip or tar archive from an array of source directory descriptors.
  *
  * @param {Array<{ localPath: string, archiveName: string }>} sourceItems
- * @param {string}   destPath     Absolute path for the output .zip file.
+ * @param {string}   destPath     Absolute path for the output archive file.
+ * @param {string}   [format]     'zip' (default) or 'tar'.
  * @param {function} [onProgress] Called with { bytes, total } during write.
- * @returns {Promise<
- *   { success: true,  data: { destPath: string, sizeBytes: number } } |
- *   { success: false, error: string }
- * >}
  */
-function createArchive(sourceItems, destPath, onProgress) {
+function createArchive(sourceItems, destPath, format, onProgress) {
+  // Support legacy 3-arg calls where format was omitted and onProgress was 3rd arg
+  if (typeof format === 'function') {
+    onProgress = format;
+    format = 'zip';
+  }
+  format = (format === 'tar') ? 'tar' : 'zip';
   return new Promise((resolve) => {
-    // Ensure the destination directory exists
     try {
       fs.mkdirSync(path.dirname(destPath), { recursive: true });
     } catch (err) {
@@ -59,12 +61,28 @@ function createArchive(sourceItems, destPath, onProgress) {
 
     let output;
     try {
-      output = fs.createWriteStream(destPath);
+      // highWaterMark: 16MB write buffer — reduces disk I/O stalls on large archives
+      output = fs.createWriteStream(destPath, { highWaterMark: 16 * 1024 * 1024 });
     } catch (err) {
       return resolve(_err(`Cannot open archive file for writing: ${err.message}`));
     }
 
-    const archive = archiverLib('zip', { zlib: { level: 6 } });
+    const archive = format === 'tar'
+      ? archiverLib('tar', {
+          // No compression — raw tar. Zero CPU cost; decompresses instantly
+          // on the server with `tar xf`. Best for uploads-heavy deploys.
+          gzip: false,
+          statConcurrency: 8,
+        })
+      : archiverLib('zip', {
+          zlib: {
+            // level 1 = fastest compression — good for PHP/CSS/JS text files,
+            // and doesn't waste CPU on already-compressed images/videos.
+            level: 1,
+            memLevel: 9,   // max zlib memory — speeds up compression
+          },
+          statConcurrency: 8,   // stat up to 8 files at once while building entries
+        });
     let settled = false;
 
     function settle(result) {
@@ -122,8 +140,9 @@ function createArchive(sourceItems, destPath, onProgress) {
  * @param   {string} runId  UUID for this deploy run.
  * @returns {string} Absolute path to deploy.zip
  */
-function getTempArchivePath(runId) {
-  return path.join(os.tmpdir(), 'sgd-deploy', runId, 'deploy.zip');
+function getTempArchivePath(runId, format) {
+  const ext = (format === 'tar') ? 'tar' : 'zip';
+  return path.join(os.tmpdir(), 'sgd-deploy', runId, `deploy.${ext}`);
 }
 
 /**

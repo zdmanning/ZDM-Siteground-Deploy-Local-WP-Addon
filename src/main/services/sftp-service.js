@@ -31,12 +31,13 @@ function _err(error) { return { success: false, error }; }
  * @param {string}   remotePath   Absolute path on the remote server.
  *                                Must use forward slashes (POSIX).
  * @param {function} [onProgress] Called with { bytes, total, percent }.
+ * @param {object}   [cancelToken] Token with a `.cancelPromise` that rejects on cancel.
  * @returns {Promise<
  *   { success: true,  data: { remotePath: string } } |
  *   { success: false, error: string }
  * >}
  */
-async function uploadFile(profile, localPath, remotePath, onProgress) {
+async function uploadFile(profile, localPath, remotePath, onProgress, cancelToken) {
   // ── Resolve key ───────────────────────────────────────────────────────────
   const privateKeyPath = keyManager.getPrivateKeyPath(profile.keyId);
   if (!privateKeyPath) {
@@ -63,6 +64,17 @@ async function uploadFile(profile, localPath, remotePath, onProgress) {
 
   // ── SFTP upload ───────────────────────────────────────────────────────────
   const sftp = new SftpClient('sgd-sftp');
+
+  // If a cancel token is provided, end the SFTP connection the moment it fires.
+  // This aborts the in-flight fastPut immediately rather than just stopping
+  // our side from waiting for it.
+  let cancelListener = null;
+  if (cancelToken && cancelToken.cancelPromise) {
+    cancelToken.cancelPromise.catch(() => {
+      try { sftp.end(); } catch (_) {}
+    });
+  }
+
   try {
     await sftp.connect({
       host:              profile.sshHost,
@@ -90,6 +102,12 @@ async function uploadFile(profile, localPath, remotePath, onProgress) {
     }
 
     await sftp.fastPut(localPath, remotePath, {
+      // 1MB chunks — default is 32KB which causes thousands of tiny SSH packets.
+      // Larger chunks = far fewer round trips = dramatically faster upload.
+      chunkSize:   1024 * 1024,
+      // 6 chunks in-flight simultaneously — keeps the pipe full without
+      // overwhelming the server's receive buffer.
+      concurrency: 6,
       step: (transferred, _chunk, total) => {
         if (onProgress) {
           const t = total || totalBytes;
@@ -107,6 +125,7 @@ async function uploadFile(profile, localPath, remotePath, onProgress) {
   } catch (err) {
     return _err(_friendlyError(err));
   } finally {
+    cancelListener = null;
     try { await sftp.end(); } catch (_) {}
   }
 }

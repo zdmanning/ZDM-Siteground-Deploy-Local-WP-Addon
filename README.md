@@ -21,11 +21,14 @@ A [Local by WP Engine](https://localwp.com/) add-on that deploys your Local Word
 5. [Deploying](#deploying)
    - [Code-only deploy](#code-only-deploy)
    - [Full deploy](#full-deploy)
+   - [Archive format](#archive-format)
+   - [Stopping a deploy](#stopping-a-deploy)
 6. [Activity log](#activity-log)
-7. [Safety warnings](#safety-warnings)
-8. [Troubleshooting](#troubleshooting)
-9. [Development guide](#development-guide)
-10. [Roadmap](#roadmap)
+7. [Profile management](#profile-management)
+8. [Safety warnings](#safety-warnings)
+9. [Troubleshooting](#troubleshooting)
+10. [Development guide](#development-guide)
+11. [Roadmap](#roadmap)
 
 ---
 
@@ -41,6 +44,10 @@ Two deploy modes are available:
 | **Full deploy** | The entire `wp-content` directory **plus** the local database, with automatic remote DB backup and domain search-replace |
 
 Authentication uses **SSH key pairs** (Ed25519). Keys are generated locally, stored on your machine, and never transmitted as passwords. The add-on supports multiple saved **profiles**, each pointing to a different SiteGround site, so you can deploy to staging and production without re-entering credentials.
+
+Each profile stores a **default deploy mode** (`code` or `full`). When you click Deploy from the dashboard or profile detail screen, the deploy screen pre-selects that mode automatically.
+
+Deploys can be **stopped mid-flight** at any point — including during the file upload phase. Cancellation tears down the active SFTP connection and automatically removes any partial temp files left on the remote server.
 
 ---
 
@@ -111,10 +118,9 @@ Before the wizard generates a key, you need to **collect your SSH credentials fr
 **What to collect:**
 
 1. Log in to [my.siteground.com](https://my.siteground.com).
-2. Go to **Websites → Manage** for the target site.
-3. Open **Security → SSH Keys Manager**.
-4. Note your **SSH hostname** — it looks like `sg-server-123.siteground.com`.
-5. Note your **SSH username** — it typically starts with `u` followed by digits, e.g. `u12345678`.
+2. Open **Site Tools** for your target site.
+3. Go to **Devs → SSH Keys Manager**.
+4. Your **SSH host**, **username**, and **port** are shown on the right side of that page under **SSH Credentials**.
 
 > **Do not create an SSH key in SiteGround yet.** The wizard generates a key pair for you locally in the next step. You paste the public key into SiteGround in Step 5.
 
@@ -129,15 +135,16 @@ Fill in the form with the credentials you just collected.
 | Field | Description | Example |
 |---|---|---|
 | **Profile name** | A label for this deployment target | `BIOHM Production` |
-| **SSH host** | The hostname from SiteGround's SSH Manager | `sg-server-123.siteground.com` |
+| **SSH host** | From the SSH Credentials panel in SiteGround's Devs → SSH Keys Manager | `ssh.yourdomain.com` |
 | **SSH port** | Pre-filled as `18765` — change only if SiteGround tells you otherwise | `18765` |
 | **SSH username** | Your SiteGround SSH user | `u12345678` |
-| **Remote web root** | Absolute path to your site's `public_html` on the server | `/home/customer/www/example.com/public_html` |
-| **Production domain** | Your live site URL — used for database search-replace during full deploys | `https://example.com` |
+| **Remote web root** | Just type your domain name (e.g. `example.com`) — the prefix `/home/customer/www/` and suffix `/public_html` are pre-filled around it | `example.com` |
 
 All fields are required. Validation runs on submit and highlights any errors inline.
 
-Click **Generate SSH key** when the form is complete.
+> **Production domain** is **auto-derived** from the remote web root when the profile is saved. For example, `example.com` becomes `https://example.com`. You can override it later in profile edit if needed.
+
+Click **Generate SSH key →** when the form is complete.
 
 ---
 
@@ -168,15 +175,14 @@ Click **Next** once the key is shown as generated successfully.
 The wizard displays your full public key with a **Copy** button. Follow these steps in SiteGround:
 
 1. Open [my.siteground.com](https://my.siteground.com) in your browser — **keep the wizard screen open**.
-2. Go to **Websites → Manage → Security → SSH Keys Manager**.
-3. Click **Add New SSH Key** (or equivalent button).
-4. Give it any name, e.g. `Local Deploy`.
-5. Paste the entire public key into the **Public Key** field.  
+2. Open **Site Tools** for your target site, then go to **Devs → SSH Keys Manager**.
+3. Click the **Import** tab.
+4. Give the key a name, e.g. `Local Deploy`, and paste the entire public key into the **Public Key** field.  
    It must begin with `ssh-ed25519`.
-6. Save, then verify the key shows as **Active** in the list.
+5. Save, then verify the key shows as **Active** in the list.
    > An inactive key is silently rejected — the connection test will fail.
 
-7. Return to the wizard and check **"I have pasted the public key into SiteGround and it is now Active"**.
+6. Return to the wizard and check **"I have pasted the public key into SiteGround and it is now Active"**.
 
 > SiteGround can take **30–60 seconds** to propagate a newly activated key. If the connection test in the next step fails immediately after activation, wait a minute and retry.
 
@@ -215,7 +221,6 @@ A summary table shows every piece of configuration collected during the wizard. 
 | SSH host:port | |
 | SSH username | |
 | Remote web root | Shown in monospace — verify this path is correct |
-| Production domain | Used only for DB search-replace in full deploys |
 | SSH key | Ed25519, identified by the first 8 characters of the key ID |
 | Connection test | Shown as `Passed ✓` or `Not tested / skipped` (highlighted amber) |
 
@@ -241,9 +246,32 @@ You never need to re-run the wizard for this profile. Your connection settings a
 
 ## Deploying
 
-Open the **SiteGround Deploy** panel, select a profile from the dashboard, then click **Deploy**.
+Open the **SiteGround Deploy** panel and select a profile from the dashboard.
 
-The deploy screen pulls a **preflight summary** automatically — showing the local source path, remote destination, and whether each local directory was found on disk.
+### Dashboard profile cards
+
+Each profile card on the dashboard shows:
+- Profile name, deploy mode pill (**Code only** or **Full deploy**), and last-deployed timestamp
+- SSH host and username
+- Production domain
+
+Four action buttons appear on each card without needing to open the profile:
+
+| Button | Action |
+|---|---|
+| **Deploy** | Opens the deploy screen, pre-selecting the profile's default deploy mode |
+| **Test SSH** | Runs an inline SSH connection test and shows the result on the card |
+| **Edit** | Opens the profile detail / edit view |
+| **Delete** | Prompts for confirmation, then permanently removes the profile and its key files |
+
+---
+
+### Deploy screen overview
+
+Clicking **Deploy** opens the deploy screen, which loads a **preflight summary** automatically:
+
+- **Deploy summary card** — shows profile name, SSH host, remote path, production domain, and selected mode
+- **Local source card** — shows the linked Local site name and `wp-content` path with a green/red reachability indicator. If the Local site is stopped or the path has moved, the deploy button is disabled and an error banner is shown.
 
 ---
 
@@ -262,16 +290,22 @@ Syncs selected `wp-content` subdirectories from your Local site to the productio
 
 Targets that do not exist locally are shown with a **not found locally — will skip** badge and are automatically omitted from the deploy.
 
+**Archive format** — before deploying, choose between **ZIP** (default, recommended) or **TAR** (uncompressed). ZIP applies level-1 compression, which typically reduces archive size 3–5× for PHP/CSS/JS files and results in a faster total transfer despite the extra compression time. TAR produces a larger archive but has no CPU overhead.
+
 **Pipeline:**
 
 1. Validates the local `wp-content` path and remote web root.
-2. Creates a `.zip` archive of the selected directories.
+2. Creates an archive (`.zip` or `.tar`) of the selected directories in a local temp folder.
 3. Uploads the archive to a temp directory on the server via SFTP.
 4. Extracts the archive on the server.
 5. Syncs each directory using `rsync` (falls back to `rm + cp` if rsync is unavailable).
-6. Deletes the remote temp directory.
-7. Deletes the local temp archive.
-8. Records `lastDeployedAt` on the profile.
+6. Flushes three caches in order:
+   - WordPress object cache (`wp cache flush`)
+   - Elementor CSS cache (`wp elementor flush_css`)
+   - SiteGround cache (`wp sg purge` when sg-cachepress is active; otherwise falls back to deleting `wp-content/cache/sgo-cache/`)
+7. Deletes the remote temp directory.
+8. Deletes the local temp archive.
+9. Records `lastDeployedAt` on the profile.
 
 All steps emit real-time log lines in the deploy panel. A code-only deploy for themes and plugins typically completes in under 30 seconds on a fast connection.
 
@@ -283,11 +317,24 @@ Syncs the **entire `wp-content` directory** and **overwrites the production data
 
 > **Read the [Safety warnings](#safety-warnings) section before running a full deploy.**
 
+**Archive format** — same ZIP / TAR picker as code-only deploy. See [Archive format](#archive-format) below.
+
+**Directory exclusions** — below the archive format picker the deploy screen lists every subdirectory found in the remote `wp-content`. Tick any directory to skip it in this deploy without deleting it. The following are **always excluded** (no checkbox shown):
+
+- `sgd-db-backups` — the addon's own backup folder
+
+The following are **pre-checked by default** if they exist on the remote server:
+
+- `backups-dup-lite` — Duplicator Pro backup files
+- `updraft` — UpdraftPlus backup files
+
+You can uncheck any pre-selected directory, or check additional ones. A summary line at the bottom of the list shows which directories will be skipped.
+
 **What a full deploy does — in order:**
 
 1. Validates the local `wp-content` path and remote web root.
 2. Exports the local database to a temporary `.sql` file using WP-CLI (falls back to `mysqldump`).
-3. Archives all `wp-content` subdirectories.
+3. Archives all `wp-content` subdirectories not in the exclusion list.
 4. Uploads the archive via SFTP.
 5. Uploads the `.sql` file via SFTP.
 6. Opens an SSH connection.
@@ -300,11 +347,41 @@ Syncs the **entire `wp-content` directory** and **overwrites the production data
 9. Syncs every `wp-content` subdirectory (rsync → cp fallback). Files present remotely but absent locally are deleted.
 10. Imports the local `.sql` into the remote database (WP-CLI → mysql CLI fallback).
 11. Runs **domain search-replace**: replaces your Local dev domain (e.g. `my-site.local`) with the production domain across all database tables (WP-CLI `search-replace --all-tables`).
-12. Flushes the remote WordPress cache and any page cache.
+12. Flushes caches in order:
+    - WordPress object cache (`wp cache flush`)
+    - Elementor CSS cache (`wp elementor flush_css`)
+    - SiteGround dynamic cache (`wp sg purge` via the sg-cachepress plugin)
+    - **Fallback if sg-cachepress is not active**: directly deletes `wp-content/cache/sgo-cache/` via SSH
 13. Cleans up the remote temp directory.
 14. Records `lastDeployedAt` on the profile.
 
 The confirmation checkbox in the deploy panel must be checked before the **Full deploy** button becomes active.
+
+---
+
+### Archive format
+
+Both deploy modes offer an **Archive format** picker before the deploy starts:
+
+| Format | Compression | Best for |
+|---|---|---|
+| **ZIP** *(default)* | Level 1 (fast) | Most deploys — smaller upload, fast enough on modern hardware |
+| **TAR** | None | Very slow connections where CPU is cheaper than bandwidth, or for debugging |
+
+The format choice is per-deploy and does not affect the profile's saved settings.
+
+---
+
+### Stopping a deploy
+
+A **■ Stop deploy** button appears in the deploy panel while any deploy is running. Clicking it:
+
+1. Signals the deploy pipeline to cancel.
+2. If a file upload is in progress, the SFTP connection is torn down immediately — the upload stops mid-flight.
+3. An SSH cleanup command (`rm -rf`) runs against the remote temp directory to remove any partial upload.
+4. The deploy panel shows a **cancelled** result: "Deploy cancelled. Your site was not changed."
+
+Cancellation is safe at any point **before** the database import begins. If cancelled after the database import has started, treat it as a failed full deploy and restore from the automatic backup.
 
 If the database import fails (steps 10–11), the activity log shows:
 - The exact error from the server.
@@ -318,10 +395,56 @@ If the database import fails (steps 10–11), the activity log shows:
 The **Activity Log** tab in the deploy panel shows a history of every deploy and SSH test run for the current profile.
 
 - Runs are shown as cards with an action badge (Code deploy / Full deploy / Connection test), outcome (success / failure), timestamp, and duration.
+- Targets synced and the SSH host are shown in the card header row.
 - Click any run card to expand it and see every individual log entry with timestamps and colour-coded severity (info / success / warning / error).
-- Use the filter pills at the top to show only a specific type of run.
+- An expanded card has a **⍘ Copy log** button that copies all log entries for that run to the clipboard as plain text.
+- Use the filter pills at the top to show only a specific type of run (Code deploy / Full deploy / Connection test / All).
+- A **Clear logs** button at the top right deletes all activity log history for the current profile after confirmation. This cannot be undone.
 
 Logs are persisted to disk and survive Local restarts.
+
+---
+
+## Profile management
+
+Each saved profile can be viewed, edited, cloned, or deleted from the **Profile Detail** screen. Open it by clicking a profile on the dashboard.
+
+### Viewing a profile
+
+The profile detail screen shows a read-only summary of all settings, including:
+
+- SSH host, port, and username
+- Remote web root
+- Production domain
+- SSH key ID
+- Last deploy timestamp
+- Default deploy mode
+- Connection test status
+
+### Editing a profile
+
+Click **Edit** to open the inline edit form. All fields are editable:
+
+| Field | Notes |
+|---|---|
+| Profile name | |
+| SSH host, port, username | |
+| Remote web root | Smart split input — enter just the domain name |
+| **Production domain** | Your live site URL (e.g. `https://example.com`). Used for domain search-replace during full deploys. It is auto-derived from the remote web root when the profile is first saved, but you can override it here if needed. |
+| Linked Local site | Re-link to a different Local site if the site was moved or renamed |
+| Default deploy mode | `Code only` or `Full deploy` — pre-selects the mode on the deploy screen |
+
+Saving writes the changes to `profiles.json` immediately. No wizard steps need to be repeated.
+
+### Cloning a profile
+
+Click **Clone** to duplicate the profile. The clone panel asks for a new profile name and lets you optionally re-link to a different Local site or update the remote web root. A new SSH key pair is generated for the clone — the original profile's key is not shared.
+
+Clone is useful for creating staging/production pairs where all SSH credentials are identical except the remote web root.
+
+### Deleting a profile
+
+Click **Delete** and confirm. The profile record and its SSH key files are permanently removed. Logs for the deleted profile are also removed.
 
 ---
 
@@ -338,7 +461,7 @@ Logs are persisted to disk and survive Local restarts.
 - The remote database **backup is automatic** and runs as the first server-side step. Its path is printed in the activity log. Keep this until you confirm the deploy was successful.
 - The backup is a raw SQL dump stored in `{remoteWebRoot}/sgd-db-backups/`. SiteGround does not automatically clean this folder — periodically delete old backups via SFTP or SSH.
 - **All** `wp-content` subdirectories are synced in a full deploy, not just themes and plugins. Any directory present remotely but not locally will be **deleted**. This includes custom upload directories and any directories added by the host.
-- The production domain search-replace is automatic when a `productionDomain` is set on the profile. If this field is empty, search-replace is skipped and the database will retain your Local dev URLs — the site will appear broken until corrected manually.
+- The production domain used for search-replace is normally auto-derived from the remote web root when the profile is created. If that derived value is wrong and you do not override it in profile edit, the deploy can replace URLs with the wrong domain.
 - A full deploy **cannot be automatically undone** once the database import completes. To roll back: restore the remote database from the backup in `sgd-db-backups/`, then selectively re-upload any files you want to revert.
 - Do not close Local during a full deploy. If the process is interrupted mid-import, your remote database may be in a partially imported state. Use the backup to restore.
 
@@ -363,7 +486,7 @@ SiteGround key propagation can take **30–60 seconds** after you click Activate
 
 ### "Authentication failed" / "Public key rejected"
 
-1. Confirm the key shows as **Active** (not just saved) in SiteGround's SSH Keys Manager.
+1. Confirm the key shows as **Active** (not just saved) in SiteGround's **Devs → SSH Keys Manager**.
 2. Confirm the SSH **username** matches what SiteGround shows — it must be the SSH user, not your SiteGround account email.
 3. If you regenerated the key after saving the profile, the old public key is still in SiteGround. Add the new public key and activate it, or delete the old entry first.
 
@@ -390,15 +513,19 @@ The remote web root field contains a Windows-style path (backslashes) or is empt
 
 ### Code deploy succeeds but changes do not appear on the site
 
-1. Clear server-side cache: SiteGround's **Speed → Caching** panel has a Flush Cache button.
+The add-on automatically flushes three caches at the end of every deploy: WordPress object cache, Elementor CSS cache, and SiteGround cache. If changes still aren't visible:
+
+1. If the deploy log shows a cache flush warning, manually flush from SiteGround's **Speed → Caching** panel.
 2. Clear any CDN or Cloudflare cache if applicable.
 3. Hard-refresh the browser (Ctrl+Shift+R).
+
+> The SiteGround dynamic cache flush (`wp sg purge`) requires the **sg-cachepress** plugin to be active. If it is not installed, the add-on falls back to deleting `wp-content/cache/sgo-cache/` directly — the file cache is cleared but the NGINX-level dynamic cache is not. In that case, use SiteGround's control panel to flush the dynamic cache manually.
 
 ---
 
 ### Full deploy: database import succeeded but site shows broken URLs
 
-The production domain field on the profile is either empty or incorrect. The search-replace step was skipped or used the wrong domain. Run the replacement manually via SSH:
+The profile's production domain was derived incorrectly from the remote web root, or it was manually overridden to the wrong value. Update the profile, then run the replacement manually via SSH:
 ```bash
 wp search-replace 'http://my-site.local' 'https://example.com' --all-tables --path=/home/customer/www/example.com/public_html
 ```
@@ -488,12 +615,13 @@ src/
       archiver-service.js Creates zip archives of wp-content directories
       database-service.js Local DB export, remote backup/import, search-replace
       deploy-service.js   Orchestrates code-only and full deploy pipelines
-      key-manager.js      Ed25519 key generation and disk storage
-      logger.js           Structured run + entry logging to disk
-      profile-store.js    electron-store based profile persistence
-      profile-validator.js Validation rules for profile fields
-      sftp-service.js     SFTP file upload via ssh2-sftp-client
-      ssh-service.js      SSH connection testing and persistent exec handle
+      key-manager.js            Ed25519 key generation and disk storage
+      local-mysql-repair-service.js  WP-CLI / mysqldump fallback helpers
+      logger.js                 Structured run + entry logging to disk
+      profile-store.js          electron-store based profile persistence
+      profile-validator.js      Validation rules for profile fields
+      sftp-service.js           SFTP file upload via ssh2-sftp-client (cancelable mid-flight)
+      ssh-service.js            SSH connection testing and persistent exec handle
   renderer/
     index.jsx             Renderer entry point — exports App as default
     App.jsx               Shell router (Dashboard / ProfileDetail / Deploy / Logs)

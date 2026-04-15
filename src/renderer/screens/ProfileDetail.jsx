@@ -669,7 +669,7 @@ export default function ProfileDetail({ profileId, onDeploy, onViewLogs, onBack,
 
           {/* Primary actions */}
           <div className="sgd-detail__actions">
-            <button className="sgd-btn sgd-btn--primary" onClick={() => onDeploy(profileId)}>
+            <button className="sgd-btn sgd-btn--primary" onClick={() => onDeploy(profileId, defaultMode)}>
               Deploy →
             </button>
             <button className="sgd-btn sgd-btn--secondary" onClick={() => onViewLogs(profileId)}>
