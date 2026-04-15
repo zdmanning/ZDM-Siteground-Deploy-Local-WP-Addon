@@ -23,7 +23,7 @@ export default function Settings({ onBack }) {
       </div>
 
       <div className="sgd-card">
-        <div className="sgd-card__title">SiteGround Deploy v0.1.0</div>
+        <div className="sgd-card__title">SiteGround Deploy v1.0.0</div>
         <div className="sgd-card__meta" style={{ marginTop: 4 }}>
           Deploy Local WordPress sites to SiteGround via SSH.
         </div>
