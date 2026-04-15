@@ -742,9 +742,44 @@ async function runFullDeploy(profile, options = {}, onLog) {
   }
 }
 
+/**
+ * Delete remote SQL backups (the entire `sgd-db-backups` directory).
+ * @param {string} profileId
+ * @returns {Promise<{ success: true } | { success: false, error: string }>}
+ */
+async function deleteRemoteBackups(profileId) {
+  const profileResult = profileStore.getProfileById(profileId);
+  if (!profileResult.success) return profileResult;
+
+  const profile = profileResult.data;
+  const sshRes = await sshService.openConnection(profile);
+  if (!sshRes.success) return sshRes;
+
+  const sshConn = sshRes.data;
+  try {
+    const webRoot = (profile.remoteWebRoot || '').trim().replace(/\/$/, '');
+    if (!webRoot || webRoot.length < 5) return _err('Invalid remote web root.');
+    
+    const backupsDir = `${webRoot}/sgd-db-backups`;
+    let out = '';
+    const res = await sshConn.exec(`rm -rf ${_q(backupsDir)} 2>&1`, (c) => out += c);
+    
+    if (res.exitCode !== 0) {
+      return _err(`Failed to delete remote backups. Exit code ${res.exitCode}: ${out}`);
+    }
+    return _ok({});
+  } catch (err) {
+    return _err(`Error deleting remote backups: ${err.message}`);
+  } finally {
+    try { await sshConn.end(); } catch (_) {}
+  }
+}
+
 module.exports = {
   getPreflightInfo,
   runCodeDeploy,
   runFullDeploy,
+  deleteRemoteBackups,
 };
+
 

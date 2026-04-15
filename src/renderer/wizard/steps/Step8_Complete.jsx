@@ -19,7 +19,7 @@ export default function Step8_Complete({ data, onComplete, onGoToDeploy }) {
           <strong>Profile created:</strong> {data.name}
           <br />
           <span style={{ fontSize: '12px' }}>
-            Targets: <strong>{data.productionDomain}</strong>
+            Targets: <strong>{data.remoteWebRoot}</strong>
           </span>
         </div>
 
@@ -77,3 +77,5 @@ export default function Step8_Complete({ data, onComplete, onGoToDeploy }) {
     </div>
   );
 }
+
+

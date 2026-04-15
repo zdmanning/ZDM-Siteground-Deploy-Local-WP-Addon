@@ -5,6 +5,7 @@ import {
   deleteProfile,
   testSSHConnection,
   repairLocalSiteMysql,
+  deleteRemoteBackups,
 } from '../ipc';
 import FormField from '../components/FormField';
 
@@ -92,8 +93,6 @@ function LocalMysqlRepairPanel({ profile }) {
     setResult(null);
 
     const res = await repairLocalSiteMysql(profile.localSiteId);
-    setResult(res);
-    setStatus(res.success ? 'done' : 'error');
   }
 
   return (
@@ -138,6 +137,55 @@ function LocalMysqlRepairPanel({ profile }) {
       {result && result.success === false && (
         <div className="sgd-alert sgd-alert--danger" style={{ marginTop: 10 }}>
           <strong>Repair failed:</strong> {result.error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ─── Remote backups cleanup ──────────────────────────────────────────────────
+
+function RemoteBackupsPanel({ profile }) {
+  const [status, setStatus] = useState('idle');
+  const [result, setResult] = useState(null);
+
+  async function runDelete() {
+    if (!profile.remoteWebRoot) return;
+    if (!window.confirm('WARNING: This will permanently delete the entire sgd-db-backups directory on your remote server. Continue?')) return;
+    setStatus('running');
+    setResult(null);
+
+    try { const res = await deleteRemoteBackups(profile.id); setResult(res); setStatus(res.success ? 'done' : 'error'); } catch (err) { setResult({ success: false, error: err.message }); setStatus('error'); }
+  }
+
+  return (
+    <div className="..." style={{ borderTop: '1px solid #dee2e6', paddingTop: 16, marginTop: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div>
+          <SectionTitle>Delete Remote DB Backups</SectionTitle>
+          <p style={{ margin: '6px 0 0', fontSize: 12, color: '#6c757d' }}>
+            Permanently delete old backups kept in the sgd-db-backups folder on the remote server.
+          </p>
+        </div>
+        <button
+          className="sgd-btn sgd-btn--danger sgd-btn--sm"
+          onClick={runDelete}
+          disabled={!profile.remoteWebRoot || status === 'running'}
+        >
+          {status === 'running' ? 'Deleting…' : 'Delete all backups'}
+        </button>
+      </div>
+
+      {result?.success && (
+        <div className="sgd-alert sgd-alert--success" style={{ marginTop: 10, fontSize: 13, background: '#d4edda', color: '#155724', padding: '8px 12px', borderRadius: 4 }}>
+          <strong>Backup folder deleted successfully.</strong>
+        </div>
+      )}
+
+      {result && result.success === false && (
+        <div className="sgd-alert sgd-alert--danger" style={{ marginTop: 10 }}>
+          <strong>Deletion failed:</strong> {result.error}
         </div>
       )}
     </div>
@@ -252,7 +300,7 @@ function EditForm({ profile, onSaved, onCancel }) {
             type="text"
             value={fields.sshHost}
             onChange={(e) => set('sshHost', e.target.value)}
-            placeholder="sgXXX.siteground.com"
+            placeholder="ssh.yourdomain.com"
             autoComplete="off"
           />
         </FormField>
@@ -306,26 +354,9 @@ function EditForm({ profile, onSaved, onCancel }) {
           />
           <span className="sgd-input-suffix">/public_html</span>
         </div>
-      </FormField>
-
-      <FormField
-        id="pd-domain"
-        label="Production domain"
-        error={errors.productionDomain}
-        hint="Full URL, e.g. https://example.com"
-        required
-      >
-        <input
-          id="pd-domain"
-          type="url"
-          value={fields.productionDomain}
-          onChange={(e) => set('productionDomain', e.target.value)}
-          placeholder="https://example.com"
-        />
-      </FormField>
-
-      <FormField id="pd-mode" label="Default deploy mode">
-        <select
+</FormField>
+<FormField id="pd-mode" label="Default deploy mode">
+<select
           id="pd-mode"
           value={fields.deployMode}
           onChange={(e) => set('deployMode', e.target.value)}
@@ -417,7 +448,7 @@ export default function ProfileDetail({ profileId, onDeploy, onViewLogs, onBack 
         </button>
         <div className="sgd-detail__title-block">
           <h2 className="sgd-detail__title">{profile.name}</h2>
-          <span className="sgd-detail__subtitle">{profile.productionDomain}</span>
+          <span className="sgd-detail__subtitle">{profile.remoteWebRoot}</span>
         </div>
         {mode === 'view' && (
           <div className="sgd-detail__header-actions">
@@ -440,7 +471,6 @@ export default function ProfileDetail({ profileId, onDeploy, onViewLogs, onBack 
             <InfoRow label="SSH host"    value={`${profile.sshHost}:${profile.sshPort || 18765}`} mono />
             <InfoRow label="Username"    value={profile.sshUser}       mono />
             <InfoRow label="Web root"    value={profile.remoteWebRoot} mono />
-            <InfoRow label="Domain"      value={profile.productionDomain} />
             <InfoRow label="Deploy mode" value={defaultMode === 'full' ? 'Full deploy (code + database)' : 'Code only (themes + plugins)'} />
             <InfoRow label="Created"     value={new Date(profile.createdAt).toLocaleString()} />
             <InfoRow
@@ -456,6 +486,9 @@ export default function ProfileDetail({ profileId, onDeploy, onViewLogs, onBack 
 
           {/* Local site repair */}
           <LocalMysqlRepairPanel profile={profile} />
+
+          {/* Remote DB Backups */}
+          <RemoteBackupsPanel profile={profile} />
 
           {/* Primary actions */}
           <div className="sgd-detail__actions">
@@ -489,3 +522,16 @@ export default function ProfileDetail({ profileId, onDeploy, onViewLogs, onBack 
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+

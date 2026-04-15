@@ -56,19 +56,6 @@ const RULES = {
       return null;
     },
   },
-  productionDomain: {
-    required: true,
-    label: 'Production domain',
-    test(v) {
-      try {
-        const u = new URL(v);
-        if (!['http:', 'https:'].includes(u.protocol)) return 'Must start with http:// or https://';
-      } catch {
-        return 'Must be a valid URL (e.g. https://example.com).';
-      }
-      return null;
-    },
-  },
   keyId: {
     required: true,
     label: 'Key ID',
@@ -167,3 +154,7 @@ module.exports = {
   validateProfilePatch,
   validateField,
 };
+
+
+
+

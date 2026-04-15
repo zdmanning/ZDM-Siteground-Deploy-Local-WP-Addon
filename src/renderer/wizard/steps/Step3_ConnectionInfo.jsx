@@ -77,7 +77,7 @@ export default function Step3_ConnectionInfo({ data, onChange, onNext, onBack })
             <input
               id="sgd-host"
               type="text"
-              placeholder="e.g. sg-server-123.siteground.com"
+              placeholder="e.g. ssh.yourdomain.com"
               autoComplete="off"
               spellCheck={false}
               {...field('sshHost')}
@@ -145,22 +145,7 @@ export default function Step3_ConnectionInfo({ data, onChange, onNext, onBack })
           </div>
         </FormField>
 
-        <FormField
-          id="sgd-domain"
-          label="Production domain"
-          hint="The live site URL — used for database search-replace during full deploys."
-          error={errors.productionDomain}
-          required
-        >
-          <input
-            id="sgd-domain"
-            type="text"
-            placeholder="https://example.com"
-            autoComplete="off"
-            spellCheck={false}
-            {...field('productionDomain')}
-          />
-        </FormField>
+        
 
         {submitted && !valid && (
           <div className="sgd-alert sgd-alert--danger" style={{ marginTop: 8 }}>
@@ -180,3 +165,7 @@ export default function Step3_ConnectionInfo({ data, onChange, onNext, onBack })
     </div>
   );
 }
+
+
+
+

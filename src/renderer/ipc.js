@@ -63,6 +63,9 @@ export const runCodeDeploy = (profileId, options) =>
 export const runFullDeploy = (profileId, options) =>
   ipcRenderer.invoke('sgd:deploy:full', profileId, options);
 
+export const deleteRemoteBackups = (profileId) =>
+  ipcRenderer.invoke('sgd:deploy:delete-backups', profileId);
+
 // ─── Logs ─────────────────────────────────────────────────────────────────────
 
 export const getLogs       = (profileId)        => ipcRenderer.invoke('sgd:logs:list', profileId);
@@ -88,3 +91,4 @@ export function onLogEntry(callback) {
 export const getAllLocalSites = () => ipcRenderer.invoke('sgd:local:sites');
 export const getLocalSite = (siteId) => ipcRenderer.invoke('sgd:local:site', siteId);
 export const repairLocalSiteMysql = (siteId) => ipcRenderer.invoke('sgd:local:mysql:repair', siteId);
+

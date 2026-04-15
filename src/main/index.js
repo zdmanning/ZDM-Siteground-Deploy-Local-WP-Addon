@@ -167,6 +167,10 @@ module.exports = function (context) {
     });
   });
 
+  ipcMain.handle('sgd:deploy:delete-backups', async (_e, profileId) => {
+    return deployService.deleteRemoteBackups(profileId);
+  });
+
   // ─── Logs ──────────────────────────────────────────────────────────────────
 
   ipcMain.handle('sgd:logs:list', async (_e, profileId) => {

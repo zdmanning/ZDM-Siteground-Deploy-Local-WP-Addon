@@ -43,8 +43,7 @@ export default function Step5_PublicKey({ data, onNext, onBack }) {
             <div>
               <strong>Navigate to SSH Keys Manager</strong>
               <p>
-                Go to <strong>Websites → Manage</strong> for your site, then
-                open <strong>Security → SSH Keys Manager</strong>.
+                In your site's <strong>Site Tools</strong>, go to <strong>Devs → SSH Keys Manager</strong>, then select the <strong>Import</strong> tab.
               </p>
             </div>
           </div>
@@ -52,10 +51,11 @@ export default function Step5_PublicKey({ data, onNext, onBack }) {
           <div className="sgd-steps-list__item">
             <div className="sgd-steps-list__num">3</div>
             <div>
-              <strong>Add a new SSH key</strong>
+              <strong>Import your new SSH key</strong>
               <p>
-                Click <strong>Add New SSH Key</strong> (or the equivalent button).
-                Give it any name you like (e.g. "Local Deploy").
+                Choose a name for your key (e.g. "Local Deploy") and paste the public key from above into the{' '}
+                <strong>Public Key</strong> field. It must begin with{' '}
+                <span className="sgd-code-inline">ssh-ed25519</span>.
               </p>
             </div>
           </div>
@@ -63,11 +63,9 @@ export default function Step5_PublicKey({ data, onNext, onBack }) {
           <div className="sgd-steps-list__item">
             <div className="sgd-steps-list__num">4</div>
             <div>
-              <strong>Paste the public key</strong>
+              <strong>Your SSH Credentials</strong>
               <p>
-                Paste the entire key from above into the{' '}
-                <strong>Public Key</strong> field. It must begin with{' '}
-                <span className="sgd-code-inline">ssh-ed25519</span>.
+                The login credentials such as <strong>host</strong>, <strong>username</strong>, and <strong>port</strong> are right there on the right side of the same page.
               </p>
             </div>
           </div>

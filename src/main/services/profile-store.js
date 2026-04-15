@@ -87,17 +87,28 @@ function _keyPaths(keyId) {
   };
 }
 
+function _deriveProductionDomain(webRoot) {
+  if (!webRoot) return '';
+  const match = webRoot.match(/\/www\/([^\/]+)/);
+  if (match) return `https://${match[1]}`;
+  const dm = webRoot.match(/([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+  if (dm) return `https://${dm[1]}`;
+  return 'https://example.com';
+}
+
 /**
  * Merge default fields onto an incoming profile object.
  * Never overwrites fields the caller explicitly supplied.
  */
 function _applyDefaults(data) {
+  const prodDomain = _deriveProductionDomain(data.remoteWebRoot);
   return {
     localSiteId:    null,
     deployMode:     { defaultMode: 'code' },
     lastDeployedAt: null,
     meta:           {},
     ...data,
+    productionDomain: data.productionDomain || prodDomain,
   };
 }
 
@@ -313,4 +324,5 @@ module.exports = {
   getProfile,
   saveProfile,
 };
+
 

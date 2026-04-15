@@ -44,7 +44,7 @@ function makeInitialData(site) {
     sshPort: 18765,
     sshUser: '',
     remoteWebRoot: '/home/customer/www/',
-    productionDomain: '',
+
 
     // Runtime state set during the wizard — never entered by the user
     localSiteId: site ? site.id : null,

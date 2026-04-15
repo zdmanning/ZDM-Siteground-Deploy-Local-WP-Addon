@@ -40,7 +40,6 @@ export default function Step7_SaveProfile({ data, onChange, onNext, onBack }) {
     { label: 'SSH host',           value: `${data.sshHost}:${data.sshPort}` },
     { label: 'SSH username',       value: data.sshUser },
     { label: 'Remote web root',    value: data.remoteWebRoot },
-    { label: 'Production domain',  value: data.productionDomain },
     {
       label: 'SSH key',
       value: `Ed25519 · ID: ${data.keyId?.slice(0, 8)}…`,
@@ -127,3 +126,5 @@ export default function Step7_SaveProfile({ data, onChange, onNext, onBack }) {
     </div>
   );
 }
+
+

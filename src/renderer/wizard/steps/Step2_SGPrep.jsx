@@ -39,9 +39,9 @@ export default function Step2_SGPrep({ onNext, onBack }) {
             <div>
               <strong>Open the SSH Manager for your site</strong>
               <p>
-                Navigate to <strong>Websites → Manage</strong> for your target
+                Navigate to <strong>Site Tools</strong> for your target
                 site, then go to{' '}
-                <strong>Security → SSH Keys Manager</strong>.
+                <strong>Devs → SSH Keys Manager</strong>.
               </p>
             </div>
           </div>
@@ -49,14 +49,9 @@ export default function Step2_SGPrep({ onNext, onBack }) {
           <div className="sgd-steps-list__item">
             <div className="sgd-steps-list__num">3</div>
             <div>
-              <strong>Note your SSH host and username</strong>
+              <strong>Note your SSH credentials</strong>
               <p>
-                Your SSH host is shown on the SSH Keys Manager page — it looks
-                like{' '}
-                <span className="sgd-code-inline">sg-server-123.siteground.com</span>.
-                Your username typically starts with <span className="sgd-code-inline">u</span>{' '}
-                followed by numbers (e.g.{' '}
-                <span className="sgd-code-inline">u12345678</span>).
+                Your login credentials (host, username, and port) are located right there on the right side of the same page under <strong>SSH Credentials</strong>.
               </p>
             </div>
           </div>

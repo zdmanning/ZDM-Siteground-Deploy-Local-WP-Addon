@@ -50,21 +50,6 @@ export function validateConnectionForm(data) {
       '(e.g. /home/customer/www/example.com/public_html).';
   }
 
-  // Production domain — must be a valid http/https URL
-  if (!data.productionDomain?.trim()) {
-    errors.productionDomain = 'Required.';
-  } else {
-    try {
-      const url = new URL(data.productionDomain.trim());
-      if (!['http:', 'https:'].includes(url.protocol)) {
-        errors.productionDomain = 'Must start with https:// (e.g. https://example.com).';
-      }
-    } catch {
-      errors.productionDomain =
-        'Enter a valid URL including the protocol (e.g. https://example.com).';
-    }
-  }
-
   return errors;
 }
 
@@ -76,3 +61,4 @@ export function validateConnectionForm(data) {
 export function isFormValid(errors) {
   return Object.keys(errors).length === 0;
 }
+
