@@ -96,6 +96,8 @@ function LocalMysqlRepairPanel({ profile }) {
     setResult(null);
 
     const res = await repairLocalSiteMysql(profile.localSiteId);
+    setResult(res);
+    setStatus('idle');
   }
 
   return (

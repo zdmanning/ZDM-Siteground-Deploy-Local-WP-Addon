@@ -318,7 +318,7 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
   // Config state
   const [mode, setMode]               = useState(defaultMode === 'full' ? 'full' : 'code');
   const [checked, setChecked]         = useState([...DEFAULT_CHECKED]);
-  const [dbConfirmed, setDbConfirmed] = useState(false);
+  const [dbConfirmed, setDbConfirmed] = useState(true);
   const [excludeDirs, setExcludeDirs]     = useState([]);  // dirs to skip in full deploy
   const [archiveFormat, setArchiveFormat] = useState('zip'); // 'zip' | 'tar'
 
@@ -366,7 +366,7 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
   // ── Handlers ─────────────────────────────────────────────────────────────────
   function handleModeChange(m) {
     setMode(m);
-    setDbConfirmed(false);
+    setDbConfirmed(true);
     setExcludeDirs([]);
     setArchiveFormat('zip');
   }
@@ -400,7 +400,7 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
     setPhase('config');
     setResult(null);
     setLogEntries([]);
-    setDbConfirmed(false);
+    setDbConfirmed(true);
     setArchiveFormat('zip');
     loadPreflight();
   }
