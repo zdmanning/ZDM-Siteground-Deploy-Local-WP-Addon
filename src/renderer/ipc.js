@@ -63,11 +63,29 @@ export const runCodeDeploy = (profileId, options) =>
 export const runFullDeploy = (profileId, options) =>
   ipcRenderer.invoke('sgd:deploy:full', profileId, options);
 
+export const runDbDeploy = (profileId, options) =>
+  ipcRenderer.invoke('sgd:deploy:db', profileId, options);
+
 export const cancelDeploy = (profileId) =>
   ipcRenderer.invoke('sgd:deploy:cancel', profileId);
 
 export const deleteRemoteBackups = (profileId) =>
   ipcRenderer.invoke('sgd:deploy:delete-backups', profileId);
+
+/**
+ * List immediate children of a wp-content sub-directory for the deploy tree picker.
+ * @param {string} profileId
+ * @param {string} relPath  path relative to wp-content, e.g. 'plugins' or ''
+ */
+export const listLocalDir = (profileId, relPath) =>
+  ipcRenderer.invoke('sgd:fs:listDir', profileId, relPath);
+
+// ─── Settings ────────────────────────────────────────────────────────────────
+
+/** Returns { success, data: { confirmDefault: boolean } } */
+export const getSettings    = ()      => ipcRenderer.invoke('sgd:settings:get');
+/** Returns { success, data: { confirmDefault: boolean } } */
+export const updateSettings = (patch) => ipcRenderer.invoke('sgd:settings:set', patch);
 
 // ─── Logs ─────────────────────────────────────────────────────────────────────
 

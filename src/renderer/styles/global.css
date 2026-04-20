@@ -1208,6 +1208,118 @@ code.sgd-profile-card__info-val {
 .sgd-deploy-target__badge--missing { background: #e9ecef; color: #6c757d; }
 .sgd-deploy-target__badge--warn    { background: #fff3cd; color: #856404; }
 
+/* ── Directory tree picker ─────────────────────────────────────────────────── */
+.sgd-dir-tree__hint {
+  font-size: 11px;
+  color: #6c757d;
+  margin: 0 0 10px;
+}
+
+.sgd-dir-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sgd-dir-tree__row {
+  display: flex;
+  flex-direction: column;
+}
+
+.sgd-dir-tree__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  user-select: none;
+}
+
+.sgd-dir-tree__item:hover { background: #f0f2f5; }
+
+.sgd-dir-tree__item--disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.sgd-dir-tree__expand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: none;
+  border: 1px solid #dee2e6;
+  border-radius: 3px;
+  font-size: 13px;
+  line-height: 1;
+  color: #6c757d;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform 0.15s ease, background 0.1s ease;
+  padding: 0;
+}
+
+.sgd-dir-tree__expand:hover { background: #e9ecef; color: #292929; }
+
+.sgd-dir-tree__expand--open {
+  transform: rotate(90deg);
+  background: #e9ecef;
+  color: #292929;
+}
+
+.sgd-dir-tree__children {
+  margin-left: 42px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-left: 2px solid #e9ecef;
+  padding-left: 10px;
+  margin-bottom: 4px;
+}
+
+.sgd-dir-tree__child {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+}
+
+.sgd-dir-tree__child:hover { background: #f0f2f5; }
+
+.sgd-dir-tree__child-icon { font-size: 12px; flex-shrink: 0; }
+.sgd-dir-tree__child-icon--file { opacity: 0.5; }
+
+.sgd-dir-tree__child-hint {
+  font-size: 10px;
+  color: #adb5bd;
+  font-style: italic;
+}
+
+.sgd-dir-tree__empty {
+  font-size: 11px;
+  color: #adb5bd;
+  padding: 4px 6px;
+  font-style: italic;
+}
+
+.sgd-dir-tree__full-hint {
+  font-size: 11px;
+  color: #6c757d;
+  margin: 4px 0 0;
+  font-style: italic;
+}
+
+.sgd-spinner--xs {
+  width: 10px;
+  height: 10px;
+  border-width: 1px;
+}
+
 /* ── Deploy action bar ─────────────────────────────────────────────────────── */
 .sgd-deploy-actions {
   display: flex;

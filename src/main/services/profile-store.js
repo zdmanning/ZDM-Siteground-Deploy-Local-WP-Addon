@@ -23,7 +23,8 @@
  *   keyId:             string        uuid — references a key pair in key-manager
  *   privateKeyPath:    string        absolute path to private key file on disk
  *   publicKeyPath:     string        absolute path to public key file on disk
- *   deployMode:        object        { defaultMode: 'code'|'full' }
+ *   deployMode:        object        { defaultMode: 'code'|'full'|'db' }
+ *   confirmDefault:    boolean|null  Danger-zone checkbox default. null = use global setting.
  *   createdAt:         string        ISO timestamp
  *   updatedAt:         string        ISO timestamp
  *   lastDeployedAt:    string|null   ISO timestamp of most recent successful deploy
@@ -103,10 +104,11 @@ function _deriveProductionDomain(webRoot) {
 function _applyDefaults(data) {
   const prodDomain = _deriveProductionDomain(data.remoteWebRoot);
   return {
-    localSiteId:    null,
-    deployMode:     { defaultMode: 'code' },
-    lastDeployedAt: null,
-    meta:           {},
+    localSiteId:      null,
+    deployMode:       { defaultMode: 'code' },
+    confirmDefault:   null,
+    lastDeployedAt:   null,
+    meta:             {},
     ...data,
     productionDomain: data.productionDomain || prodDomain,
   };

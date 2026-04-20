@@ -40,12 +40,13 @@ const fs     = require('fs');
 const { v4: uuidv4 } = require('uuid');
 
 const localAdapter  = require('../adapters/local-app');
-const archiverSvc   = require('./archiver-service');
-const sftpSvc       = require('./sftp-service');
-const sshService    = require('./ssh-service');
-const dbSvc         = require('./database-service');
-const profileStore  = require('./profile-store');
-const logger        = require('./logger');
+const archiverSvc    = require('./archiver-service');
+const sftpSvc        = require('./sftp-service');
+const sshService     = require('./ssh-service');
+const dbSvc          = require('./database-service');
+const profileStore   = require('./profile-store');
+const settingsStore  = require('./settings-store');
+const logger         = require('./logger');
 
 // ─── Supported deploy targets ──────────────────────────────────────────────────
 // key   = what the user / UI passes in options.targets[]
@@ -167,16 +168,24 @@ function getPreflightInfo(profileId, targets) {
 
   return _ok({
     profileId,
-    profileName:        profile.name,
-    localSiteId:        siteId,
-    localSiteName:      site ? site.name : null,
-    wpContentPath:      wpContentPath,
+    profileName:           profile.name,
+    localSiteId:           siteId,
+    localSiteName:         site ? site.name : null,
+    wpContentPath:         wpContentPath,
     wpContentReachable,
     wpContentDirs,
-    remoteWebRoot:      profile.remoteWebRoot,
-    productionDomain:   profile.productionDomain || null,
-    sshHost:            `${profile.sshHost}:${profile.sshPort || 18765}`,
-    targets:            resolvedTargets,
+    remoteWebRoot:         profile.remoteWebRoot,
+    productionDomain:      profile.productionDomain || null,
+    sshHost:               `${profile.sshHost}:${profile.sshPort || 18765}`,
+    targets:               resolvedTargets,
+    resolvedConfirmDefault: (() => {
+      // Per-profile override takes priority; null means fall back to global.
+      if (profile.confirmDefault !== null && profile.confirmDefault !== undefined) {
+        return Boolean(profile.confirmDefault);
+      }
+      const globalSettings = settingsStore.getSettings();
+      return globalSettings.success ? Boolean(globalSettings.data.confirmDefault) : false;
+    })(),
   });
 }
 
@@ -247,20 +256,41 @@ async function runCodeDeploy(profile, options = {}, onLog) {
     emit('info', `Remote web root:  ${remoteWebRootVal}`);
 
     // ── 2. Build source items ────────────────────────────────────────────────
-    const requestedTargets = Array.isArray(options.targets) && options.targets.length > 0
-      ? options.targets
-      : ['themes', 'plugins'];
-
+    // options.paths takes priority (specific sub-paths like 'plugins/woocommerce').
+    // Falls back to options.targets (top-level dir names like 'plugins').
     const sourceItems = [];
-    for (const target of requestedTargets) {
-      const subDir    = KNOWN_TARGETS[target] || target;
-      const localPath = path.join(wpContentPath, subDir);
-      if (!fs.existsSync(localPath)) {
-        emit('warning', `Skipping "${target}" — not found at ${localPath}`);
-        continue;
+
+    if (Array.isArray(options.paths) && options.paths.length > 0) {
+      for (const relPath of options.paths) {
+        // Sanitise: must be a relative path with no traversal
+        const normalised = relPath.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+        if (!normalised || normalised.includes('..')) {
+          emit('warning', `Skipping invalid path: "${relPath}"`);
+          continue;
+        }
+        const localPath = path.join(wpContentPath, ...normalised.split('/'));
+        if (!fs.existsSync(localPath)) {
+          emit('warning', `Skipping "${normalised}" — not found at ${localPath}`);
+          continue;
+        }
+        sourceItems.push({ localPath, archiveName: normalised });
+        emit('info', `  ✓ Queued: ${normalised}`);
       }
-      sourceItems.push({ localPath, archiveName: subDir });
-      emit('info', `  ✓ Queued: ${target}`);
+    } else {
+      const requestedTargets = Array.isArray(options.targets) && options.targets.length > 0
+        ? options.targets
+        : ['themes', 'plugins'];
+
+      for (const target of requestedTargets) {
+        const subDir    = KNOWN_TARGETS[target] || target;
+        const localPath = path.join(wpContentPath, subDir);
+        if (!fs.existsSync(localPath)) {
+          emit('warning', `Skipping "${target}" — not found at ${localPath}`);
+          continue;
+        }
+        sourceItems.push({ localPath, archiveName: subDir });
+        emit('info', `  ✓ Queued: ${target}`);
+      }
     }
 
     if (sourceItems.length === 0) {
@@ -374,14 +404,17 @@ async function runCodeDeploy(profile, options = {}, onLog) {
       const target  = item.archiveName;
       const srcDir  = `${remoteTempDir}/${target}`;
       const destDir = `${remoteWebRoot}/wp-content/${target}`;
+      const destParent = path.posix.dirname(destDir);
 
       emit('info', `Syncing ${target}…`);
 
       const syncCmd = [
+        // Ensure parent dir exists (needed when syncing sub-paths like plugins/woocommerce)
+        `mkdir -p ${_q(destParent)};`,
         `if command -v rsync > /dev/null 2>&1; then`,
         `  rsync -az --delete --exclude='.git' ${_q(srcDir + '/')} ${_q(destDir + '/')};`,
         `else`,
-        `  rm -rf ${_q(destDir)} && cp -rp ${_q(srcDir)} ${_q(remoteWebRoot + '/wp-content/')};`,
+        `  rm -rf ${_q(destDir)} && cp -rp ${_q(srcDir)} ${_q(destParent + '/')};`,
         `fi`,
       ].join(' ');
 
@@ -400,12 +433,15 @@ async function runCodeDeploy(profile, options = {}, onLog) {
       emit('success', `  ✓ ${target} → ${destDir}`);
     }
 
-    // ── 8. Remote cleanup ────────────────────────────────────────────────────
+    // ── 8. Flush remote caches ────────────────────────────────────────────────
+    await dbSvc.clearRemoteCache(sshConn, remoteWebRoot, (entry) => emit(entry.level, entry.message));
+
+    // ── 9. Remote cleanup ────────────────────────────────────────────────────
     emit('info', 'Cleaning up remote temp files…');
     await sshConn.exec(`rm -rf ${_q(remoteTempDir)}`);
     emit('info', 'Remote cleanup complete');
 
-    // ── 9. Mark deployed ─────────────────────────────────────────────────────
+    // ── 10. Mark deployed ────────────────────────────────────────────────────
     if (pid) {
       profileStore.markDeployed(pid);
     }
@@ -909,10 +945,241 @@ function cancelDeploy(profileId) {
   return _ok({ cancelled: false, reason: 'No active deploy for this profile' });
 }
 
+// ─── Database-only deploy ─────────────────────────────────────────────────────
+
+/**
+ * Deploy only the local database to the remote server.
+ * Mirrors the DB steps from runFullDeploy (export → backup → import →
+ * search-replace → cache flush) without touching any files.
+ *
+ * @param {object}   profile  Saved profile (raw object).
+ * @param {object}   options  { confirmed: boolean }
+ * @param {function} onLog    Real-time log entry callback.
+ */
+async function runDbDeploy(profile, options = {}, onLog) {
+  const pid   = profile.id || null;
+  const runId = uuidv4();
+
+  const emit  = (lvl, msg) =>
+    _emit(lvl, msg, onLog, pid, { runId, actionType: 'db_deploy', profileId: pid });
+  const dbLog = (entry) => {
+    const rich = { ...entry, runId, actionType: 'db_deploy', profileId: pid };
+    onLog && onLog(rich);
+    logger.appendEntry(pid, rich);
+  };
+
+  let sshConn       = null;
+  let remoteTempDir = null;
+  let localTablePrefix  = null;
+  let remoteTablePrefix = null;
+  let dbBackupPath      = null;
+  let _outcome     = 'failure';
+  let _outcomeMeta = null;
+
+  const token = makeToken();
+  if (pid) activeDeployTokens.set(pid, token);
+
+  logger.startRun(pid, 'db_deploy', runId, {
+    host: `${profile.sshHost}:${profile.sshPort || 18765}`,
+  });
+
+  try {
+    emit('info', `── Database deploy started ── ${profile.name} ──`);
+    emit('info', `Run ID: ${runId.slice(0, 8)}`);
+
+    // ── 1. Validate profile ───────────────────────────────────────────────────
+    if (!profile.localSiteId) {
+      return _err('This profile is not linked to a Local site.');
+    }
+
+    const remoteWebRootVal = (profile.remoteWebRoot || '').replace(/\\/g, '/').replace(/\/$/, '');
+    if (!remoteWebRootVal || !remoteWebRootVal.startsWith('/')) {
+      return _err('Remote web root is not set or is not a valid absolute path.');
+    }
+
+    emit('info', `Remote web root: ${remoteWebRootVal}`);
+
+    // ── 2. Export local database ──────────────────────────────────────────────
+    emit('info', '── Exporting local database…');
+    const localSqlPath   = dbSvc.getTempSqlPath(runId);
+    const dbExportResult = await dbSvc.exportLocalDatabase(
+      profile.localSiteId,
+      localSqlPath,
+      dbLog
+    );
+    if (!dbExportResult.success) {
+      return _err(`Local database export failed:\n${dbExportResult.error}`);
+    }
+
+    const localPrefixResult = dbSvc.getLocalTablePrefix(profile.localSiteId);
+    if (!localPrefixResult.success) {
+      return _err(`Could not determine the local table prefix:\n${localPrefixResult.error}`);
+    }
+    localTablePrefix = localPrefixResult.data.tablePrefix;
+    emit('info', `Local DB table prefix: ${localTablePrefix}`);
+
+    if (token.isCancelled) throw new DeployCancelledError();
+
+    // ── 3. Upload SQL via SFTP ────────────────────────────────────────────────
+    remoteTempDir       = `/tmp/sgd-deploy-${runId}`;
+    const remoteSqlPath = `${remoteTempDir}/database.sql`;
+
+    emit('info', '── Uploading database file…');
+    const sqlUploadResult = await dbSvc.uploadSqlFile(
+      profile,
+      localSqlPath,
+      remoteSqlPath,
+      dbLog
+    );
+    if (!sqlUploadResult.success) return _err(`SQL upload failed: ${sqlUploadResult.error}`);
+
+    if (token.isCancelled) throw new DeployCancelledError();
+
+    // ── 4. Open SSH connection ────────────────────────────────────────────────
+    emit('info', '── Opening SSH connection…');
+    const connResult = await sshService.openConnection(profile);
+    if (!connResult.success) return _err(`SSH connection failed: ${connResult.error}`);
+    sshConn = connResult.data;
+    emit('success', 'SSH connection open');
+
+    const remoteWebRoot = remoteWebRootVal;
+
+    // ── 5. Remote DB backup (MANDATORY) ──────────────────────────────────────
+    emit('info', '── Creating remote database backup…');
+    const backupsDir = `${remoteWebRoot}/sgd-db-backups`;
+    dbBackupPath     = `${backupsDir}/db-${runId.slice(0, 8)}-${Date.now()}.sql`;
+
+    const backupResult = await dbSvc.backupRemoteDatabase(
+      sshConn,
+      remoteWebRoot,
+      dbBackupPath,
+      dbLog
+    );
+    if (!backupResult.success) {
+      return _err(`Remote database backup failed:\n${backupResult.error}`);
+    }
+
+    const remotePrefixResult = await dbSvc.getRemoteTablePrefix(sshConn, remoteWebRoot);
+    if (!remotePrefixResult.success) {
+      return _err(`Could not determine the remote table prefix:\n${remotePrefixResult.error}`);
+    }
+    remoteTablePrefix = remotePrefixResult.data.tablePrefix;
+    emit('info', `Remote DB table prefix: ${remoteTablePrefix}`);
+
+    if (token.isCancelled) throw new DeployCancelledError();
+
+    // ── 6. Import database ────────────────────────────────────────────────────
+    emit('info', '── Importing database…');
+    const importResult = await dbSvc.importRemoteDatabase(
+      sshConn,
+      remoteWebRoot,
+      remoteSqlPath,
+      dbLog
+    );
+
+    if (!importResult.success) {
+      emit('error',   `DB import failed: ${importResult.error}`);
+      emit('warning', `Remote DB backup is at: ${dbBackupPath}`);
+      emit('info',    `Manual import: wp db import ${remoteSqlPath} --path=${_q(remoteWebRoot)} --allow-root`);
+    } else {
+      // ── 7. Prefix update if mismatched ──────────────────────────────────────
+      if (localTablePrefix && remoteTablePrefix && localTablePrefix !== remoteTablePrefix) {
+        emit('warning', `Table prefix mismatch: remote ${remoteTablePrefix} → local ${localTablePrefix}`);
+        const prefixUpdateResult = await dbSvc.updateRemoteTablePrefix(
+          sshConn, remoteWebRoot, localTablePrefix, dbLog
+        );
+        if (!prefixUpdateResult.success) {
+          return _err(
+            `Database imported, but remote wp-config prefix update failed.\n` +
+            `${prefixUpdateResult.error}\n\nRemote DB backup: ${dbBackupPath}`
+          );
+        }
+      }
+
+      // ── 8. Drop stale tables ────────────────────────────────────────────────
+      const activeTablePrefix  = localTablePrefix || remoteTablePrefix;
+      const stalePrefixResult  = await dbSvc.getRemoteStaleTablePrefixes(
+        sshConn, remoteWebRoot, activeTablePrefix
+      );
+      if (!stalePrefixResult.success) {
+        emit('warning', `Stale table discovery failed (non-fatal): ${stalePrefixResult.error}`);
+      } else {
+        for (const stalePrefix of stalePrefixResult.data.prefixes) {
+          const cleanupResult = await dbSvc.dropRemoteTablesByPrefix(
+            sshConn, remoteWebRoot, stalePrefix, dbLog
+          );
+          if (!cleanupResult.success) {
+            emit('warning', `Old ${stalePrefix}* table cleanup failed (non-fatal): ${cleanupResult.error}`);
+          }
+        }
+      }
+
+      // ── 9. Search-replace ───────────────────────────────────────────────────
+      const localDomain = localAdapter.getSiteLocalDomain(profile.localSiteId);
+      const prodDomain  = profile.productionDomain || null;
+
+      if (prodDomain && localDomain && localDomain !== prodDomain) {
+        emit('info', '── Running domain search-replace…');
+        const srResult = await dbSvc.runSearchReplace(
+          sshConn, remoteWebRoot, localDomain, prodDomain, dbLog
+        );
+        if (!srResult.success) {
+          emit('warning', `search-replace failed (non-fatal): ${srResult.error}`);
+          emit('info',    `Run manually: wp search-replace '${localDomain}' '${prodDomain}' --all-tables --path=${_q(remoteWebRoot)}`);
+        }
+      } else if (!prodDomain) {
+        emit('warning', 'No productionDomain set on profile — search-replace skipped.');
+      }
+
+      // ── 10. Flush remote cache ──────────────────────────────────────────────
+      await dbSvc.clearRemoteCache(sshConn, remoteWebRoot, dbLog);
+    }
+
+    // ── 11. Remote cleanup ────────────────────────────────────────────────────
+    emit('info', 'Cleaning up remote temp files…');
+    await sshConn.exec(`rm -rf ${_q(remoteTempDir)}`);
+    emit('info',    'Remote cleanup complete.');
+    emit('success', `Remote DB backup retained at: ${dbBackupPath}`);
+
+    // ── 12. Mark deployed ─────────────────────────────────────────────────────
+    if (pid) profileStore.markDeployed(pid);
+
+    emit('success', '── Database deploy complete ──');
+    _outcome     = 'success';
+    _outcomeMeta = { dbImported: importResult.success };
+    return _ok({ runId, mode: 'db', dbBackupPath, dbImported: importResult.success });
+
+  } catch (err) {
+    if (err instanceof DeployCancelledError) {
+      emit('warning', '── Deploy cancelled by user ──');
+      _outcome     = 'cancelled';
+      _outcomeMeta = { cancelled: true };
+      if (remoteTempDir) {
+        const cleanConn = sshConn || (await sshService.openConnection(profile).then((r) => r.success ? r.data : null).catch(() => null));
+        if (cleanConn) {
+          try { await cleanConn.exec(`rm -rf ${_q(remoteTempDir)}`); } catch (_) {}
+          if (!sshConn) { try { await cleanConn.end(); } catch (_) {} }
+        }
+      }
+      return _err('Deploy cancelled');
+    }
+    _outcomeMeta = { error: err.message };
+    emit('error', `Unexpected error: ${err.message}`);
+    return _err(`Unexpected error during database deploy: ${err.message}`);
+
+  } finally {
+    logger.finishRun(pid, runId, _outcome, _outcomeMeta);
+    if (pid) activeDeployTokens.delete(pid);
+    if (sshConn) { try { await sshConn.end(); } catch (_) {} }
+    dbSvc.cleanupLocalSql(runId);
+  }
+}
+
 module.exports = {
   getPreflightInfo,
   runCodeDeploy,
   runFullDeploy,
+  runDbDeploy,
   cancelDeploy,
   deleteRemoteBackups,
 };

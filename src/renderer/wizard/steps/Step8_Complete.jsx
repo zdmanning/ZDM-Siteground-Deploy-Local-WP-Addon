@@ -35,13 +35,13 @@ export default function Step8_Complete({ data, onComplete, onGoToDeploy }) {
             </div>
           </div>
           <div className="sgd-info-list__item">
-            <span className="sgd-info-list__icon">🗄️</span>
+            <span className="sgd-info-list__icon">�</span>
             <div>
-              <strong>Two deploy modes available</strong>
+              <strong>Three deploy modes available</strong>
               <p>
-                <strong>Code only</strong> pushes your themes and plugins.{' '}
-                <strong>Full deploy</strong> also replaces the production
-                database (with automatic backup and search-replace).
+                <strong>Code only</strong> pushes themes and plugins.{' '}
+                <strong>Full deploy</strong> also replaces the production database.{' '}
+                <strong>Database only</strong> overwrites just the remote database.
               </p>
             </div>
           </div>

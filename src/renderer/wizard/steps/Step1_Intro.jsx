@@ -23,20 +23,27 @@ export default function Step1_Intro({ onNext, onCancel }) {
 
         <div className="sgd-info-list">
           <div className="sgd-info-list__item">
-            <span className="sgd-info-list__icon">📁</span>
+            <span className="sgd-info-list__icon">�</span>
             <div>
               <strong>Code deploy</strong>
               <p>Push your themes and plugins to production in seconds.</p>
             </div>
           </div>
           <div className="sgd-info-list__item">
-            <span className="sgd-info-list__icon">🗄️</span>
+            <span className="sgd-info-list__icon">⚡</span>
             <div>
               <strong>Full deploy</strong>
               <p>
-                Optionally push your local database too — with automatic remote
-                backup and URL search-replace built in.
+                Sync all of wp-content and overwrite the remote database — with
+                automatic backup and URL search-replace built in.
               </p>
+            </div>
+          </div>
+          <div className="sgd-info-list__item">
+            <span className="sgd-info-list__icon">💾</span>
+            <div>
+              <strong>Database-only deploy</strong>
+              <p>Push just your local database to production, keeping remote files untouched.</p>
             </div>
           </div>
           <div className="sgd-info-list__item">

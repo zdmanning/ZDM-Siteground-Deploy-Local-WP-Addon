@@ -9,8 +9,11 @@
  */
 
 const { ipcMain } = require('electron');
+const fs = require('fs');
+const path = require('path');
 const localAdapter = require('./adapters/local-app');
 const profileStore = require('./services/profile-store');
+const settingsStore = require('./services/settings-store');
 const keyManager = require('./services/key-manager');
 const sshService = require('./services/ssh-service');
 const deployService = require('./services/deploy-service');
@@ -174,12 +177,30 @@ module.exports = function (context) {
     });
   });
 
+  ipcMain.handle('sgd:deploy:db', async (event, profileId, options) => {
+    const profileResult = profileStore.getProfileById(profileId);
+    if (!profileResult.success) return profileResult;
+    return deployService.runDbDeploy(profileResult.data, options, (entry) => {
+      event.sender.send('sgd:log:entry', entry);
+    });
+  });
+
   ipcMain.handle('sgd:deploy:delete-backups', async (_e, profileId) => {
     return deployService.deleteRemoteBackups(profileId);
   });
 
   ipcMain.handle('sgd:deploy:cancel', async (_e, profileId) => {
     return deployService.cancelDeploy(profileId);
+  });
+
+  // ─── Settings ───────────────────────────────────────────────────────────────
+
+  ipcMain.handle('sgd:settings:get', async () => {
+    return settingsStore.getSettings();
+  });
+
+  ipcMain.handle('sgd:settings:set', async (_e, patch) => {
+    return settingsStore.updateSettings(patch);
   });
 
   // ─── Logs ──────────────────────────────────────────────────────────────────
@@ -212,5 +233,32 @@ module.exports = function (context) {
 
   ipcMain.handle('sgd:local:mysql:repair', async (_e, siteId) => {
     return localMysqlRepairService.repairSiteMysql(siteId);
+  });
+
+  // ─── Filesystem browser (for deploy tree picker) ───────────────────────────
+  // Returns immediate children of a wp-content sub-path for a given profile.
+  // relPath is relative to wp-content, e.g. 'plugins' or '' for wp-content root.
+  ipcMain.handle('sgd:fs:listDir', async (_e, profileId, relPath) => {
+    const profileResult = profileStore.getProfileById(profileId);
+    if (!profileResult.success) return { success: false, error: 'Profile not found' };
+    const profile = profileResult.data;
+    if (!profile.localSiteId) return { success: false, error: 'No local site linked to this profile' };
+    const wpContentPath = localAdapter.getSiteWpContentPath(profile.localSiteId);
+    if (!wpContentPath) return { success: false, error: 'Could not resolve wp-content path' };
+    const targetPath = relPath
+      ? path.join(wpContentPath, ...relPath.split('/'))
+      : wpContentPath;
+    if (!fs.existsSync(targetPath)) return { success: false, error: `Path not found: ${targetPath}` };
+    try {
+      const entries = fs.readdirSync(targetPath, { withFileTypes: true })
+        .map((e) => ({ name: e.name, isDir: e.isDirectory() }))
+        .sort((a, b) => {
+          if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+          return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+        });
+      return { success: true, data: entries };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
   });
 };

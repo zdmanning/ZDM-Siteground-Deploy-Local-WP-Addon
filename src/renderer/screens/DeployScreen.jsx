@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { deployPreflight, runCodeDeploy, runFullDeploy, cancelDeploy, onLogEntry } from '../ipc';
+import { deployPreflight, runCodeDeploy, runFullDeploy, runDbDeploy, cancelDeploy, onLogEntry, listLocalDir } from '../ipc';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const CODE_TARGETS = [
-  { key: 'themes',     label: 'themes',     warning: null },
-  { key: 'plugins',    label: 'plugins',    warning: null },
-  { key: 'mu-plugins', label: 'mu-plugins', warning: null },
-  { key: 'uploads',    label: 'uploads',    warning: 'uploads can be very large — this may take a long time' },
+const CODE_DIRS = [
+  { key: 'themes',     warning: null },
+  { key: 'plugins',    warning: null },
+  { key: 'mu-plugins', warning: null },
+  { key: 'uploads',    warning: 'uploads can be very large \u2014 this may take a long time' },
 ];
 
-const DEFAULT_CHECKED = ['themes', 'plugins'];
+const DEFAULT_SELECTED_PATHS = ['themes', 'plugins'];
 
 const LEVEL_CLASS = {
   info:    'sgd-log__line--info',
@@ -20,6 +20,24 @@ const LEVEL_CLASS = {
 };
 
 // ─── Mode selector ────────────────────────────────────────────────────────────
+
+// SVG cylinder icon — reliable cross-platform substitute for the emoji
+function DbIcon({ size = 18 }) {
+  return (
+    <svg
+      width={size} height={size}
+      viewBox="0 0 18 18"
+      fill="currentColor"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+      style={{ display: 'inline-block', verticalAlign: 'middle' }}
+    >
+      <ellipse cx="9" cy="4.5" rx="6.5" ry="2.2" />
+      <path d="M2.5 4.5v9c0 1.21 2.91 2.2 6.5 2.2s6.5-.99 6.5-2.2v-9c0 1.21-2.91 2.2-6.5 2.2s-6.5-.99-6.5-2.2z" />
+      <ellipse cx="9" cy="9" rx="6.5" ry="2.2" opacity="0.3" />
+    </svg>
+  );
+}
 
 function ModeTabs({ mode, onChange }) {
   return (
@@ -47,16 +65,32 @@ function ModeTabs({ mode, onChange }) {
           <small>Entire wp-content + database</small>
         </span>
       </button>
+
+      <button
+        type="button"
+        className={`sgd-deploy-mode-tab${mode === 'db' ? ' sgd-deploy-mode-tab--active sgd-deploy-mode-tab--full-active' : ''}`}
+        onClick={() => onChange('db')}
+      >
+        <span className="sgd-deploy-mode-tab__icon"><DbIcon /></span>
+        <span className="sgd-deploy-mode-tab__text">
+          <strong>Database only</strong>
+          <small>Export local DB → overwrite remote</small>
+        </span>
+      </button>
     </div>
   );
 }
 
 // ─── Deploy summary card ──────────────────────────────────────────────────────
 
-function SummaryCard({ preflight, mode, checkedTargets }) {
+function SummaryCard({ preflight, mode, selectedPaths }) {
   const modeLabel = mode === 'full'
-    ? 'Full deploy — entire wp-content + database'
-    : `Code-only — ${checkedTargets.length > 0 ? checkedTargets.join(', ') : '(none selected)'}`;
+    ? 'Full deploy \u2014 entire wp-content + database'
+    : mode === 'db'
+      ? 'Database only \u2014 export local DB \u2192 overwrite remote'
+      : selectedPaths.length > 0
+      ? `Code-only \u2014 ${selectedPaths.join(', ')}`
+      : 'Code-only \u2014 (none selected)';
 
   return (
     <div className="sgd-card sgd-deploy-summary-card">
@@ -109,30 +143,166 @@ function PathRow({ label, value, ok }) {
   );
 }
 
-// ─── Target checkboxes (code-only) ───────────────────────────────────────────
+// ─── Indeterminate checkbox ───────────────────────────────────────────────────
 
-function TargetCheckbox({ target, label, warning, localExists, disabled, checked, onChange }) {
+function IndeterminateCheckbox({ checked, indeterminate, className, onChange, disabled }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = Boolean(indeterminate && !checked);
+  }, [indeterminate, checked]);
   return (
-    <label className={`sgd-deploy-target${disabled ? ' sgd-deploy-target--disabled' : ''}`}>
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(e) => onChange(target, e.target.checked)}
-        className="sgd-deploy-target__checkbox"
-      />
-      <span className="sgd-deploy-target__name">{label}</span>
-      {localExists === false && (
-        <span className="sgd-deploy-target__badge sgd-deploy-target__badge--missing">
-          not found locally — will skip
-        </span>
-      )}
-      {warning && localExists !== false && (
-        <span className="sgd-deploy-target__badge sgd-deploy-target__badge--warn">
-          ⚠ {warning}
-        </span>
-      )}
-    </label>
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      disabled={disabled}
+      onChange={onChange}
+      className={className}
+    />
+  );
+}
+
+// ─── Directory tree picker (code-only) ───────────────────────────────────────
+
+function DirTreePicker({ profileId, preflight, selectedPaths, onChange, disabled }) {
+  const [expanded,    setExpanded]    = useState({});
+  const [dirContents, setDirContents] = useState({});
+  const [loading,     setLoading]     = useState({});
+
+  const knownKeys  = CODE_DIRS.map((d) => d.key);
+  const existingAll = (preflight.wpContentDirs || []);
+  const knownExist  = knownKeys.filter((k) => existingAll.includes(k));
+  const extras      = existingAll.filter((d) => !knownKeys.includes(d));
+  const topDirs     = [...knownExist, ...extras];
+
+  const isDirFullySelected    = (dir) => selectedPaths.includes(dir);
+  const isDirPartiallySelected = (dir) =>
+    !selectedPaths.includes(dir) && selectedPaths.some((p) => p.startsWith(dir + '/'));
+  const isChildSelected = (childPath) => {
+    const parent = childPath.split('/')[0];
+    return selectedPaths.includes(parent) || selectedPaths.includes(childPath);
+  };
+
+  function toggleDir(dir) {
+    if (isDirFullySelected(dir)) {
+      onChange(selectedPaths.filter((p) => p !== dir));
+    } else {
+      onChange([...selectedPaths.filter((p) => !p.startsWith(dir + '/')), dir]);
+    }
+  }
+
+  function toggleChild(childPath) {
+    const parent = childPath.split('/')[0];
+    if (isDirFullySelected(parent)) {
+      const siblings = (dirContents[parent] || [])
+        .filter((e) => e.isDir)
+        .map((e) => `${parent}/${e.name}`)
+        .filter((p) => p !== childPath);
+      onChange([...selectedPaths.filter((p) => p !== parent), ...siblings]);
+    } else if (selectedPaths.includes(childPath)) {
+      onChange(selectedPaths.filter((p) => p !== childPath));
+    } else {
+      onChange([...selectedPaths, childPath]);
+    }
+  }
+
+  async function toggleExpand(dir) {
+    const nowExpanded = !expanded[dir];
+    setExpanded((prev) => ({ ...prev, [dir]: nowExpanded }));
+    if (nowExpanded && !dirContents[dir]) {
+      setLoading((prev) => ({ ...prev, [dir]: true }));
+      const res = await listLocalDir(profileId, dir);
+      setLoading((prev) => ({ ...prev, [dir]: false }));
+      if (res.success) setDirContents((prev) => ({ ...prev, [dir]: res.data }));
+    }
+  }
+
+  const knownMeta = Object.fromEntries(CODE_DIRS.map((d) => [d.key, d]));
+
+  return (
+    <div className="sgd-dir-tree">
+      {topDirs.map((dir) => {
+        const meta         = knownMeta[dir];
+        const isExpanded   = Boolean(expanded[dir]);
+        const isFullSel    = isDirFullySelected(dir);
+        const isPartSel    = isDirPartiallySelected(dir);
+        const isLoading    = Boolean(loading[dir]);
+        const children     = dirContents[dir] || [];
+        const localInfo    = preflight.targets?.find((t) => t.target === dir);
+        const localMissing = localInfo ? localInfo.localExists === false : false;
+
+        return (
+          <div key={dir} className="sgd-dir-tree__row">
+            <div className={`sgd-dir-tree__item${disabled ? ' sgd-dir-tree__item--disabled' : ''}`}>
+              <IndeterminateCheckbox
+                className="sgd-deploy-target__checkbox"
+                checked={isFullSel}
+                indeterminate={isPartSel}
+                disabled={disabled}
+                onChange={() => toggleDir(dir)}
+              />
+              <button
+                type="button"
+                className={`sgd-dir-tree__expand${isExpanded ? ' sgd-dir-tree__expand--open' : ''}`}
+                onClick={() => toggleExpand(dir)}
+                title={isExpanded ? 'Collapse' : 'Expand to pick specific items'}
+              >
+                {isLoading ? <span className="sgd-spinner sgd-spinner--xs" /> : '›'}
+              </button>
+              <span className="sgd-deploy-target__name">{dir}</span>
+              {localMissing && (
+                <span className="sgd-deploy-target__badge sgd-deploy-target__badge--missing">
+                  not found locally
+                </span>
+              )}
+              {meta?.warning && !localMissing && (
+                <span className="sgd-deploy-target__badge sgd-deploy-target__badge--warn">
+                  ⚠ {meta.warning}
+                </span>
+              )}
+            </div>
+
+            {isExpanded && (
+              <div className="sgd-dir-tree__children">
+                {children.length === 0 && !isLoading && (
+                  <span className="sgd-dir-tree__empty">empty</span>
+                )}
+                {children.map((child) => {
+                  const childPath = `${dir}/${child.name}`;
+                  const childSel  = isChildSelected(childPath);
+                  return (
+                    <label
+                      key={child.name}
+                      className={`sgd-dir-tree__child${disabled ? ' sgd-dir-tree__item--disabled' : ''}`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="sgd-deploy-target__checkbox"
+                        checked={childSel}
+                        disabled={disabled || !child.isDir}
+                        onChange={() => child.isDir && toggleChild(childPath)}
+                      />
+                      <span className={`sgd-dir-tree__child-icon${child.isDir ? '' : ' sgd-dir-tree__child-icon--file'}`}>
+                        {child.isDir ? '📁' : '📄'}
+                      </span>
+                      <span className="sgd-deploy-target__name">{child.name}</span>
+                      {!child.isDir && (
+                        <span className="sgd-dir-tree__child-hint">deploy the parent folder to include files</span>
+                      )}
+                    </label>
+                  );
+                })}
+                {isFullSel && children.length > 0 && (
+                  <p className="sgd-dir-tree__full-hint">
+                    Entire <code>{dir}/</code> selected. Uncheck above or click a sub-folder to narrow the selection.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -222,18 +392,22 @@ function ExcludeDirectories({ dirs, excluded, onChange }) {
 
 // ─── Full deploy danger zone ──────────────────────────────────────────────────
 
-function FullDeployDangerZone({ dbConfirmed, onConfirmChange, productionDomain }) {
+function FullDeployDangerZone({ dbConfirmed, onConfirmChange, productionDomain, mode = 'full' }) {
+  const isDbOnly = mode === 'db';
   return (
     <div className="sgd-deploy-danger-zone">
       <div className="sgd-deploy-danger-zone__header">
         <span className="sgd-deploy-danger-zone__icon">⚠</span>
-        <h3 className="sgd-deploy-danger-zone__title">Full deploy — read carefully before proceeding</h3>
+        <h3 className="sgd-deploy-danger-zone__title">
+          {isDbOnly ? 'Database deploy — read carefully before proceeding' : 'Full deploy — read carefully before proceeding'}
+        </h3>
       </div>
 
       <div className="sgd-deploy-danger-zone__body">
         <p className="sgd-deploy-danger-zone__lead">
-          Full deploy syncs the <strong>entire wp-content directory</strong> from your Local
-          site to the production server, then overwrites the remote database.
+          {isDbOnly
+            ? <>Database deploy overwrites the <strong>production database</strong> from your Local site. No files are changed.</>
+            : <>Full deploy syncs the <strong>entire wp-content directory</strong> from your Local site to the production server, then overwrites the remote database.</>}
         </p>
 
         <ul className="sgd-deploy-danger-zone__list">
@@ -241,17 +415,19 @@ function FullDeployDangerZone({ dbConfirmed, onConfirmChange, productionDomain }
             <span className="sgd-dz-bullet sgd-dz-bullet--safe">🛡</span>
             <span>
               A <strong>database backup</strong> is created on the remote server{' '}
-              <em>before</em> any files are changed. Its path is shown in the activity log.
+              <em>before</em> any changes are made. Its path is shown in the activity log.
             </span>
           </li>
-          <li>
-            <span className="sgd-dz-bullet sgd-dz-bullet--warn">⚙</span>
-            <span>
-              <strong>All subdirectories</strong> in wp-content (themes, plugins, uploads,
-              and any others) are synced. Files present remotely but not locally will be{' '}
-              <strong>deleted</strong>.
-            </span>
-          </li>
+          {!isDbOnly && (
+            <li>
+              <span className="sgd-dz-bullet sgd-dz-bullet--warn">⚙</span>
+              <span>
+                <strong>All subdirectories</strong> in wp-content (themes, plugins, uploads,
+                and any others) are synced. Files present remotely but not locally will be{' '}
+                <strong>deleted</strong>.
+              </span>
+            </li>
+          )}
           <li>
             <span className="sgd-dz-bullet sgd-dz-bullet--danger">✕</span>
             <span>
@@ -278,10 +454,14 @@ function FullDeployDangerZone({ dbConfirmed, onConfirmChange, productionDomain }
             className="sgd-deploy-danger-zone__checkbox"
           />
           <span>
-            I have read the above. I understand the entire wp-content will be synced and
-            the production database at{' '}
-            <strong>{productionDomain || 'production'}</strong> will be overwritten. I have
-            confirmed the correct profile is selected.
+            {isDbOnly
+              ? <>I have read the above. I understand the production database at{' '}
+                  <strong>{productionDomain || 'production'}</strong> will be overwritten. I have
+                  confirmed the correct profile is selected.</>
+              : <>I have read the above. I understand the entire wp-content will be synced and
+                  the production database at{' '}
+                  <strong>{productionDomain || 'production'}</strong> will be overwritten. I have
+                  confirmed the correct profile is selected.</>}
           </span>
         </label>
       </div>
@@ -316,9 +496,9 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
   const [preflightError, setPreflightError]      = useState(null);
 
   // Config state
-  const [mode, setMode]               = useState(defaultMode === 'full' ? 'full' : 'code');
-  const [checked, setChecked]         = useState([...DEFAULT_CHECKED]);
-  const [dbConfirmed, setDbConfirmed] = useState(true);
+  const [mode, setMode]                   = useState(defaultMode === 'full' ? 'full' : defaultMode === 'db' ? 'db' : 'code');
+  const [selectedPaths, setSelectedPaths] = useState([...DEFAULT_SELECTED_PATHS]);
+  const [dbConfirmed, setDbConfirmed]     = useState(false);
   const [excludeDirs, setExcludeDirs]     = useState([]);  // dirs to skip in full deploy
   const [archiveFormat, setArchiveFormat] = useState('zip'); // 'zip' | 'tar'
 
@@ -334,9 +514,11 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
   const loadPreflight = useCallback(() => {
     setPreflightLoading(true);
     setPreflightError(null);
-    deployPreflight(profileId, CODE_TARGETS.map((t) => t.key)).then((res) => {
+    deployPreflight(profileId, CODE_DIRS.map((t) => t.key)).then((res) => {
       if (res.success) {
         setPreflight(res.data);
+        // Apply the resolved confirm-default (global setting OR per-profile override)
+        setDbConfirmed(Boolean(res.data.resolvedConfirmDefault));
         // Pre-check any default-excluded folders that actually exist on the remote
         const dirs = res.data.wpContentDirs || [];
         setExcludeDirs((prev) => {
@@ -366,15 +548,9 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
   // ── Handlers ─────────────────────────────────────────────────────────────────
   function handleModeChange(m) {
     setMode(m);
-    setDbConfirmed(true);
+    setDbConfirmed(preflight ? Boolean(preflight.resolvedConfirmDefault) : false);
     setExcludeDirs([]);
     setArchiveFormat('zip');
-  }
-
-  function handleCheck(key, isChecked) {
-    setChecked((prev) =>
-      isChecked ? [...new Set([...prev, key])] : prev.filter((k) => k !== key)
-    );
   }
 
   async function handleDeploy() {
@@ -385,7 +561,9 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
 
     const res = mode === 'full'
       ? await runFullDeploy(profileId, { confirmed: true, excludeDirs, format: archiveFormat })
-      : await runCodeDeploy(profileId, { targets: checked, format: archiveFormat });
+      : mode === 'db'
+        ? await runDbDeploy(profileId, { confirmed: true })
+        : await runCodeDeploy(profileId, { paths: selectedPaths, format: archiveFormat });
 
     setResult(res);
     setRunning(false);
@@ -400,7 +578,8 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
     setPhase('config');
     setResult(null);
     setLogEntries([]);
-    setDbConfirmed(true);
+    setDbConfirmed(preflight ? Boolean(preflight.resolvedConfirmDefault) : false);
+    setSelectedPaths([...DEFAULT_SELECTED_PATHS]);
     setArchiveFormat('zip');
     loadPreflight();
   }
@@ -410,8 +589,8 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
     !running &&
     !preflightLoading &&
     preflight &&
-    preflight.wpContentReachable &&
-    (mode === 'full' ? dbConfirmed : checked.length > 0)
+    (mode === 'db' || preflight.wpContentReachable) &&
+    (mode === 'full' ? dbConfirmed : mode === 'db' ? dbConfirmed : selectedPaths.length > 0)
   );
 
   // ── Header ─────────────────────────────────────────────────────────────────
@@ -454,7 +633,9 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
             {result.success
               ? mode === 'full'
                 ? `Full deploy complete — ${(result.data?.synced || []).length} directories synced.`
-                : `Code deploy complete — synced: ${(result.data?.targets || []).join(', ')}`
+                : mode === 'db'
+                  ? 'Database deploy complete — remote database overwritten.'
+                  : `Code deploy complete — synced: ${(result.data?.targets || []).join(', ')}`
               : isCancelled
                 ? 'Deploy cancelled. Your site was not changed.'
                 : `Deploy failed: ${result.error}`}
@@ -516,30 +697,23 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
           <SummaryCard
             preflight={preflight}
             mode={mode}
-            checkedTargets={mode === 'code' ? checked : ['entire wp-content']}
+            selectedPaths={mode === 'code' ? selectedPaths : ['entire wp-content']}
           />
 
-          {/* ── Code-only: target checkboxes ── */}
+          {/* ── Code-only: directory tree picker ── */}
           {mode === 'code' && (
             <div className="sgd-card sgd-deploy-targets-card">
               <h3 className="sgd-deploy-info-card__title">Directories to deploy</h3>
-              <div className="sgd-deploy-targets">
-                {CODE_TARGETS.map(({ key, label, warning }) => {
-                  const info = preflight.targets?.find((t) => t.target === key);
-                  return (
-                    <TargetCheckbox
-                      key={key}
-                      target={key}
-                      label={label}
-                      warning={warning}
-                      localExists={info ? info.localExists : false}
-                      disabled={!preflight.wpContentReachable}
-                      checked={checked.includes(key)}
-                      onChange={handleCheck}
-                    />
-                  );
-                })}
-              </div>
+              <p className="sgd-dir-tree__hint">
+                Check top-level folders to deploy the whole directory, or expand › to pick specific sub-folders.
+              </p>
+              <DirTreePicker
+                profileId={profileId}
+                preflight={preflight}
+                selectedPaths={selectedPaths}
+                onChange={setSelectedPaths}
+                disabled={!preflight.wpContentReachable}
+              />
             </div>
           )}
 
@@ -559,8 +733,18 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
             </>
           )}
 
+          {/* ── Database-only: danger zone ── */}
+          {mode === 'db' && (
+            <FullDeployDangerZone
+              mode="db"
+              dbConfirmed={dbConfirmed}
+              onConfirmChange={setDbConfirmed}
+              productionDomain={preflight.productionDomain}
+            />
+          )}
+
           {/* ── Archive format ── */}
-          <ArchiveFormatPicker value={archiveFormat} onChange={setArchiveFormat} />
+          {mode !== 'db' && <ArchiveFormatPicker value={archiveFormat} onChange={setArchiveFormat} />}
 
           {/* ── Local source ── */}
           <div className="sgd-card sgd-deploy-info-card">
@@ -588,23 +772,31 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
           {/* ── Deploy action bar ── */}
           <div className="sgd-deploy-actions">
             <button
-              className={`sgd-btn sgd-btn--lg ${mode === 'full' ? 'sgd-btn--danger' : 'sgd-btn--primary'}`}
+              className={`sgd-btn sgd-btn--lg ${mode === 'full' || mode === 'db' ? 'sgd-btn--danger' : 'sgd-btn--primary'}`}
               onClick={handleDeploy}
               disabled={!canDeploy}
             >
-              {mode === 'full' ? '⚡ Run full deploy' : '▶ Deploy code'}
+              {mode === 'full'
+                ? '⚡ Run full deploy'
+                : mode === 'db'
+                  ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><DbIcon size={15} /> Deploy database</span>
+                  : '▶ Deploy code'}
             </button>
 
             <span className="sgd-deploy-actions__hint">
-              {!preflight.wpContentReachable
-                ? 'Local wp-content is not accessible.'
-                : mode === 'full'
-                  ? dbConfirmed
-                    ? 'Confirmation received. Ready to deploy.'
-                    : 'Check the confirmation box above to enable deploy.'
-                  : checked.length === 0
-                    ? 'Select at least one directory to deploy.'
-                    : `Will sync: ${checked.join(', ')}`
+              {mode === 'db'
+                ? dbConfirmed
+                  ? 'Confirmation received. Ready to deploy database.'
+                  : 'Check the confirmation box above to enable deploy.'
+                : !preflight.wpContentReachable
+                  ? 'Local wp-content is not accessible.'
+                  : mode === 'full'
+                    ? dbConfirmed
+                      ? 'Confirmation received. Ready to deploy.'
+                      : 'Check the confirmation box above to enable deploy.'
+                    : selectedPaths.length === 0
+                      ? 'Select at least one directory to deploy.'
+                      : `Will sync: ${selectedPaths.join(', ')}`
               }
             </span>
           </div>

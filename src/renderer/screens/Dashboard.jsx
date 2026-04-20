@@ -7,15 +7,17 @@ const MODE_TESTING = 'testing';
 const MODE_DONE    = 'done';
 
 function DeployModePill({ mode }) {
-  const label = mode === 'full' ? 'Full deploy' : 'Code only';
+  const label      = mode === 'full' ? 'Full deploy' : mode === 'db' ? 'DB only' : 'Code only';
+  const background = mode === 'full' ? '#fff3cd' : mode === 'db' ? '#f8d7da' : '#cce5ff';
+  const color      = mode === 'full' ? '#856404' : mode === 'db' ? '#721c24' : '#004085';
   const style = {
     display:       'inline-block',
     padding:       '1px 8px',
     borderRadius:  10,
     fontSize:      10,
     fontWeight:    700,
-    background:    mode === 'full' ? '#fff3cd' : '#cce5ff',
-    color:         mode === 'full' ? '#856404' : '#004085',
+    background,
+    color,
   };
   return <span style={style}>{label}</span>;
 }

@@ -1,8 +1,22 @@
-import React, { useState } from 'react';
-import { deleteOrphanedKeys } from '../ipc';
+import React, { useState, useEffect } from 'react';
+import { deleteOrphanedKeys, getSettings, updateSettings } from '../ipc';
 
 export default function Settings({ onBack }) {
   const [keyStatus, setKeyStatus] = useState(null);  // null | 'running' | { deleted: number } | { error: string }
+  const [confirmDefault, setConfirmDefault] = useState(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+
+  useEffect(() => {
+    getSettings().then((res) => {
+      if (res.success) setConfirmDefault(Boolean(res.data.confirmDefault));
+      setSettingsLoaded(true);
+    });
+  }, []);
+
+  async function handleConfirmDefaultChange(val) {
+    setConfirmDefault(val);
+    await updateSettings({ confirmDefault: val });
+  }
 
   async function handleClearOrphanedKeys() {
     setKeyStatus('running');
@@ -44,6 +58,27 @@ export default function Settings({ onBack }) {
           Generated key pairs are stored in Local's data directory on this machine.
           Private keys never leave this computer.
         </p>
+      </div>
+
+      <div className="sgd-card">
+        <p style={{ margin: '0 0 4px', fontWeight: 600 }}>Danger-zone confirmation checkbox default</p>
+        <p style={{ margin: '0 0 12px', fontSize: 12, color: '#6c757d' }}>
+          Controls whether the <em>"I have read the above"</em> checkbox on full deploy
+          and database deploy screens starts pre-checked or unchecked. Individual profiles
+          can override this setting.
+        </p>
+        {settingsLoaded ? (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={confirmDefault}
+              onChange={(e) => handleConfirmDefaultChange(e.target.checked)}
+            />
+            Pre-check the confirmation checkbox by default
+          </label>
+        ) : (
+          <span style={{ fontSize: 12, color: '#6c757d' }}>Loading…</span>
+        )}
       </div>
 
       <div className="sgd-card">

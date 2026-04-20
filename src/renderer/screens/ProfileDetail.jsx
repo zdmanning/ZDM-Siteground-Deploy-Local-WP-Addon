@@ -238,6 +238,7 @@ function ClonePanel({ profile, onCloned, onCancel }) {
       keyId:         profile.keyId,
       localSiteId:   fields.localSiteId || null,
       deployMode:    profile.deployMode,
+      confirmDefault: profile.confirmDefault !== undefined ? profile.confirmDefault : null,
     };
 
     const res = await createProfile(data);
@@ -397,6 +398,7 @@ function EditForm({ profile, onSaved, onCancel }) {
     remoteWebRoot:    profile.remoteWebRoot     || '',
     productionDomain: profile.productionDomain || '',
     deployMode:       profile.deployMode?.defaultMode || 'code',
+    confirmDefault:   profile.confirmDefault !== undefined ? profile.confirmDefault : null,
   });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
@@ -420,6 +422,7 @@ function EditForm({ profile, onSaved, onCancel }) {
       remoteWebRoot:    fields.remoteWebRoot.trim(),
       productionDomain: fields.productionDomain.trim(),
       deployMode:       { defaultMode: fields.deployMode },
+      confirmDefault:   fields.confirmDefault,
     };
 
     const res = await updateProfile(profile.id, patch);
@@ -519,6 +522,22 @@ function EditForm({ profile, onSaved, onCancel }) {
         >
           <option value="code">Code only — themes + plugins (safe)</option>
           <option value="full">Full deploy — code + database (danger)</option>
+          <option value="db">Database only — overwrite remote DB (danger)</option>
+        </select>
+      </FormField>
+
+      <FormField id="pd-confirm" label="Confirmation checkbox default" hint="Overrides the global addon setting for this profile only">
+        <select
+          id="pd-confirm"
+          value={fields.confirmDefault === null ? 'inherit' : fields.confirmDefault ? 'checked' : 'unchecked'}
+          onChange={(e) => {
+            const v = e.target.value;
+            set('confirmDefault', v === 'inherit' ? null : v === 'checked');
+          }}
+        >
+          <option value="inherit">Inherit from global addon setting</option>
+          <option value="checked">Always pre-checked for this profile</option>
+          <option value="unchecked">Always unchecked for this profile</option>
         </select>
       </FormField>
 
@@ -641,7 +660,7 @@ export default function ProfileDetail({ profileId, onDeploy, onViewLogs, onBack,
             <InfoRow label="SSH host"    value={`${profile.sshHost}:${profile.sshPort || 18765}`} mono />
             <InfoRow label="Username"    value={profile.sshUser}       mono />
             <InfoRow label="Web root"    value={profile.remoteWebRoot} mono />
-            <InfoRow label="Deploy mode" value={defaultMode === 'full' ? 'Full deploy (code + database)' : 'Code only (themes + plugins)'} />
+            <InfoRow label="Deploy mode" value={defaultMode === 'full' ? 'Full deploy (code + database)' : defaultMode === 'db' ? 'Database only (overwrite remote DB)' : 'Code only (themes + plugins)'} />
             <InfoRow
               label="Linked local site"
               value={
