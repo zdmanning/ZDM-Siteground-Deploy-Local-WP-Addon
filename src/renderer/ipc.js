@@ -87,6 +87,18 @@ export const getSettings    = ()      => ipcRenderer.invoke('sgd:settings:get');
 /** Returns { success, data: { confirmDefault: boolean } } */
 export const updateSettings = (patch) => ipcRenderer.invoke('sgd:settings:set', patch);
 
+// ─── Export / Import ─────────────────────────────────────────────────────────
+
+/** Opens a save dialog and writes a .sgdexport file. profileIds=null exports all.
+ *  Returns { success, data: { filePath, count } } */
+export const exportProfiles    = (profileIds)            => ipcRenderer.invoke('sgd:export:export', profileIds);
+/** Opens an open dialog, parses the file, and returns a preview (no writes).
+ *  Returns { success, data: { profiles, conflicts, exportedAt, filePath } } */
+export const pickImportFile    = ()                      => ipcRenderer.invoke('sgd:export:import:pick');
+/** Applies the import with per-profile conflict decisions.
+ *  Returns { success, data: { imported, skipped, overwritten, renamed } } */
+export const applyImport       = (profiles, decisions)   => ipcRenderer.invoke('sgd:export:import:apply', profiles, decisions);
+
 // ─── Logs ─────────────────────────────────────────────────────────────────────
 
 export const getLogs       = (profileId)        => ipcRenderer.invoke('sgd:logs:list', profileId);

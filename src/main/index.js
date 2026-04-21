@@ -14,6 +14,7 @@ const path = require('path');
 const localAdapter = require('./adapters/local-app');
 const profileStore = require('./services/profile-store');
 const settingsStore = require('./services/settings-store');
+const exportService = require('./services/export-service');
 const keyManager = require('./services/key-manager');
 const sshService = require('./services/ssh-service');
 const deployService = require('./services/deploy-service');
@@ -201,6 +202,20 @@ module.exports = function (context) {
 
   ipcMain.handle('sgd:settings:set', async (_e, patch) => {
     return settingsStore.updateSettings(patch);
+  });
+
+  // ─── Export / Import ────────────────────────────────────────────────────────
+
+  ipcMain.handle('sgd:export:export', async (_e, profileIds) => {
+    return exportService.exportProfiles(profileIds);
+  });
+
+  ipcMain.handle('sgd:export:import:pick', async () => {
+    return exportService.pickAndParseImport();
+  });
+
+  ipcMain.handle('sgd:export:import:apply', async (_e, profiles, decisions) => {
+    return exportService.applyImport(profiles, decisions);
   });
 
   // ─── Logs ──────────────────────────────────────────────────────────────────
