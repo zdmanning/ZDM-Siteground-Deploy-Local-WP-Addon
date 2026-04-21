@@ -206,6 +206,37 @@ module.exports = function (context) {
 
   // ─── Export / Import ────────────────────────────────────────────────────────
 
+  ipcMain.handle('sgd:addon:backup', async () => {
+    const { dialog } = require('electron');
+    const archiver   = require('archiver');
+    const addonRoot  = path.join(__dirname, '..');
+    const suggested  = `siteground-deploy-backup-${new Date().toISOString().slice(0,10)}.zip`;
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: 'Save addon backup',
+      defaultPath: suggested,
+      filters: [{ name: 'ZIP archive', extensions: ['zip'] }],
+    });
+    if (canceled || !filePath) return { success: false, error: 'Cancelled.' };
+    try {
+      await new Promise((resolve, reject) => {
+        const output  = fs.createWriteStream(filePath);
+        const archive = archiver('zip', { zlib: { level: 6 } });
+        output.on('close', resolve);
+        archive.on('error', reject);
+        archive.pipe(output);
+        // Include everything except node_modules, lib (build output), and .git
+        archive.glob('**/*', {
+          cwd: addonRoot,
+          ignore: ['node_modules/**', 'lib/**', '.git/**'],
+        });
+        archive.finalize();
+      });
+      return { success: true, data: { filePath } };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('sgd:export:export', async (_e, profileIds) => {
     return exportService.exportProfiles(profileIds);
   });

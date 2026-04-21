@@ -91,6 +91,9 @@ export const updateSettings = (patch) => ipcRenderer.invoke('sgd:settings:set', 
 
 /** Opens a save dialog and writes a .sgdexport file. profileIds=null exports all.
  *  Returns { success, data: { filePath, count } } */
+/** Zips the entire addon folder and prompts to save it.
+ *  Returns { success, data: { filePath } } */
+export const backupAddon       = ()                      => ipcRenderer.invoke('sgd:addon:backup');
 export const exportProfiles    = (profileIds)            => ipcRenderer.invoke('sgd:export:export', profileIds);
 /** Opens an open dialog, parses the file, and returns a preview (no writes).
  *  Returns { success, data: { profiles, conflicts, exportedAt, filePath } } */

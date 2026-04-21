@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { deleteOrphanedKeys, getSettings, updateSettings, listProfiles, exportProfiles, pickImportFile, applyImport } from '../ipc';
+import { deleteOrphanedKeys, getSettings, updateSettings, listProfiles, exportProfiles, pickImportFile, applyImport, backupAddon } from '../ipc';
 
 export default function Settings({ onBack }) {
   const [activeTab, setActiveTab] = useState('settings');  // 'settings' | 'about'
+  const [backupStatus, setBackupStatus] = useState(null);  // null | 'running' | { ok, filePath?, error? }
   const [keyStatus, setKeyStatus] = useState(null);  // null | 'running' | { deleted: number } | { error: string }
   const [confirmDefault, setConfirmDefault] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -201,6 +202,36 @@ export default function Settings({ onBack }) {
                 ))}
               </tbody>
             </table>
+          </div>
+
+          <div className="sgd-card">
+            <p style={{ margin: '0 0 8px', fontWeight: 600 }}>Backup addon</p>
+            <p style={{ margin: '0 0 12px', fontSize: 12, color: '#6c757d', lineHeight: 1.6 }}>
+              Saves a ZIP of the entire addon (source, config, everything) to a location you
+              choose. To reinstall, just unzip into your Local addons folder.
+            </p>
+            <button
+              className="sgd-btn sgd-btn--secondary sgd-btn--sm"
+              onClick={async () => {
+                setBackupStatus('running');
+                const res = await backupAddon();
+                if (res.success) {
+                  setBackupStatus({ ok: true, filePath: res.data.filePath });
+                } else if (res.error === 'Cancelled.') {
+                  setBackupStatus(null);
+                } else {
+                  setBackupStatus({ ok: false, error: res.error });
+                }
+              }}
+              disabled={backupStatus === 'running'}
+            >
+              {backupStatus === 'running' ? 'Saving…' : 'Save addon backup (.zip)…'}
+            </button>
+            {backupStatus && backupStatus !== 'running' && (
+              <p style={{ margin: '8px 0 0', fontSize: 12, color: backupStatus.ok ? '#28a745' : '#dc3545' }}>
+                {backupStatus.ok ? `✓ Saved to ${backupStatus.filePath}` : `Error: ${backupStatus.error}`}
+              </p>
+            )}
           </div>
 
           <div className="sgd-alert sgd-alert--info" style={{ marginTop: 4 }}>
