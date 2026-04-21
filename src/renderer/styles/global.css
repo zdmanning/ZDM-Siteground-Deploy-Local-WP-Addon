@@ -26,15 +26,14 @@
 }
 
 /* ── Minimized state ────────────────────────────────────────────────────────── */
-
+/* When minimized, snap the bar to the bottom of the viewport.
+   Width and left offset are captured at minimize time and applied via inline style
+   so the bar stays exactly as wide as the panel and horizontally aligned. */
 .sgd-app--minimized {
-  /* Defeat height: 100% so the panel actually collapses to header height only */
+  position: fixed;
+  bottom: 0;
+  z-index: 9999;
   height: auto !important;
-  min-height: 0 !important;
-  /* In case Local's panel is a flex container, don't stretch to fill it */
-  align-self: flex-start;
-  width: 100%;
-  /* Transparent so Local's own background shows behind the collapsed bar */
   background: transparent;
 }
 
@@ -70,10 +69,11 @@
 }
 
 .sgd-header__title {
+  font-family: 'Inter', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
   font-weight: 700;
   font-size: 14px;
   cursor: pointer;
-  letter-spacing: 0.3px;
+  letter-spacing: -0.1px;
 }
 
 .sgd-header__actions {

@@ -14,7 +14,7 @@
  *   settings        – global add-on settings
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import Dashboard from './screens/Dashboard';
 import WizardContainer from './wizard/WizardContainer';
 import ProfileDetail from './screens/ProfileDetail';
@@ -30,6 +30,19 @@ export default function App({ site }) {
   const [viewParams, setViewParams] = useState({});
   // Collapsed panel state
   const [minimized, setMinimized] = useState(false);
+  // Captured geometry so the minimized bar sits at the same width/position
+  const appRef = useRef(null);
+  const [snapRect, setSnapRect] = useState(null);
+
+  function handleToggleMinimize() {
+    if (!minimized && appRef.current) {
+      const rect = appRef.current.getBoundingClientRect();
+      setSnapRect({ width: rect.width, left: rect.left });
+    } else {
+      setSnapRect(null);
+    }
+    setMinimized((m) => !m);
+  }
 
   const navigate = useCallback((targetView, params = {}) => {
     setView(targetView);
@@ -91,11 +104,15 @@ export default function App({ site }) {
   };
 
   return (
-    <div className={`sgd-app${minimized ? ' sgd-app--minimized' : ''}`}>
+    <div
+      ref={appRef}
+      className={`sgd-app${minimized ? ' sgd-app--minimized' : ''}`}
+      style={minimized && snapRect ? { width: snapRect.width, left: snapRect.left } : {}}
+    >
       <Header
         currentView={view}
         minimized={minimized}
-        onToggleMinimize={() => setMinimized((m) => !m)}
+        onToggleMinimize={handleToggleMinimize}
         onHome={() => navigate('dashboard')}
         onSettings={() => navigate('settings')}
       />

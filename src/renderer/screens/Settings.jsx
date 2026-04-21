@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { deleteOrphanedKeys, getSettings, updateSettings, listProfiles, exportProfiles, pickImportFile, applyImport } from '../ipc';
 
 export default function Settings({ onBack }) {
+  const [activeTab, setActiveTab] = useState('settings');  // 'settings' | 'about'
   const [keyStatus, setKeyStatus] = useState(null);  // null | 'running' | { deleted: number } | { error: string }
   const [confirmDefault, setConfirmDefault] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -138,6 +139,78 @@ export default function Settings({ onBack }) {
         </button>
         <h2 style={{ margin: 0 }}>Settings</h2>
       </div>
+
+      {/* ── Tab bar ──────────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid #e2e6ea', marginBottom: 16 }}>
+        {[['settings', 'Settings'], ['about', 'About']].map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setActiveTab(key)}
+            style={{
+              background: 'none',
+              border: 'none',
+              borderBottom: activeTab === key ? '2px solid #910C1D' : '2px solid transparent',
+              marginBottom: -2,
+              padding: '6px 18px',
+              fontFamily: 'inherit',
+              fontSize: 13,
+              fontWeight: activeTab === key ? 700 : 400,
+              color: activeTab === key ? '#910C1D' : '#6c757d',
+              cursor: 'pointer',
+              transition: 'color 0.15s',
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'about' && (
+        <div>
+          <div className="sgd-card">
+            <p style={{ margin: '0 0 6px', fontWeight: 700, fontSize: 14 }}>SiteGround Deploy for Local WP</p>
+            <p style={{ margin: '0 0 4px', fontSize: 12, color: '#6c757d' }}>Version 1.0.0</p>
+          </div>
+
+          <div className="sgd-card">
+            <p style={{ margin: '0 0 8px', fontWeight: 600 }}>Disclaimer</p>
+            <p style={{ margin: 0, fontSize: 12, color: '#292929', lineHeight: 1.6 }}>
+              This add-on is an independent, community-built tool and is{' '}
+              <strong>not affiliated with, endorsed by, or in any way officially
+              connected to SiteGround.com</strong> or its parent company. The SiteGround
+              name and logo are trademarks of SiteGround Hosting Ltd. Use of those marks
+              here is solely for descriptive purposes to identify the compatible hosting
+              platform.
+            </p>
+          </div>
+
+          <div className="sgd-card">
+            <p style={{ margin: '0 0 12px', fontWeight: 600 }}>Author</p>
+            <table style={{ fontSize: 12, borderCollapse: 'collapse', width: '100%' }}>
+              <tbody>
+                {[
+                  ['Name',    'Zechariah Manning'],
+                  ['Company', 'ZDM Designs'],
+                  ['Website', <a href="https://zdmdesigns.com" target="_blank" rel="noreferrer" style={{ color: '#910C1D' }}>zdmdesigns.com</a>],
+                  ['Source',  <a href="https://github.com/zdmanning/ZDM-Siteground-Deploy-Local-WP-Addon" target="_blank" rel="noreferrer" style={{ color: '#910C1D' }}>GitHub Repository</a>],
+                ].map(([label, value]) => (
+                  <tr key={label}>
+                    <td style={{ color: '#6c757d', width: 80, paddingBottom: 6, verticalAlign: 'top' }}>{label}</td>
+                    <td style={{ paddingBottom: 6 }}>{value}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="sgd-alert sgd-alert--info" style={{ marginTop: 4 }}>
+            This add-on is provided as-is, without warranty of any kind. Always
+            back up your site before deploying.
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'settings' && (<>
 
       <div className="sgd-card">
         <div className="sgd-card__title">SiteGround Deploy v1.0.0</div>
@@ -395,6 +468,7 @@ export default function Settings({ onBack }) {
         Additional settings (WP-CLI path, remote backup directory, etc.) will
         appear here in a future release.
       </div>
+      </>)}
     </div>
   );
 }
