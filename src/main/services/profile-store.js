@@ -296,6 +296,54 @@ function validateProfileData(data, isUpdate = false) {
   return validator.validateProfile(data, { isUpdate });
 }
 
+/**
+ * Rotate the SSH key pair for a profile.
+ *
+ * This is the ONLY function permitted to change keyId after creation.
+ * The new key pair MUST already exist on disk before calling this —
+ * generate it first, test the connection, and only then call rotate.
+ *
+ * The IPC handler is responsible for deleting the OLD key after this
+ * commits (and only if no other profile shares that old keyId).
+ *
+ * @param {string} profileId
+ * @param {string} newKeyId
+ * @returns {{ success: true,  data: { oldKeyId, newKeyId, profile } } |
+ *           { success: false, error: string }}
+ */
+function rotateProfileKey(profileId, newKeyId) {
+  if (!profileId) return _err('profileId is required.');
+  if (!newKeyId)  return _err('newKeyId is required.');
+
+  // Verify the new key files actually exist before committing anything.
+  // Failing here is safe — the old profile is untouched.
+  const existsResult = keyManager.keyPairExists(newKeyId);
+  if (!existsResult.data.exists) {
+    return _err(
+      'New key pair files not found on disk. ' +
+      'Generate the key pair before rotating.'
+    );
+  }
+
+  const profiles = _readAll();
+  const idx = profiles.findIndex((p) => p.id === profileId);
+  if (idx < 0) return _err(`Profile "${profileId}" not found.`);
+
+  const oldKeyId = profiles[idx].keyId;
+  const keyPaths = _keyPaths(newKeyId);
+
+  profiles[idx] = {
+    ...profiles[idx],
+    keyId:          newKeyId,
+    privateKeyPath: keyPaths.privateKeyPath,
+    publicKeyPath:  keyPaths.publicKeyPath,
+    updatedAt:      new Date().toISOString(),
+  };
+
+  _writeAll(profiles);
+  return _ok({ oldKeyId, newKeyId, profile: profiles[idx] });
+}
+
 // ─── Legacy aliases (used by existing IPC handlers) ───────────────────────────
 // Keep these so main/index.js doesn't need to change until a later refactor.
 const listProfiles = () => getProfiles().data;
@@ -321,6 +369,7 @@ module.exports = {
   updateProfile,
   deleteProfile,
   markDeployed,
+  rotateProfileKey,
   validateProfileData,
 
   // Legacy aliases — kept for compatibility with existing IPC handlers

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { deployPreflight, runCodeDeploy, runFullDeploy, runDbDeploy, cancelDeploy, onLogEntry, listLocalDir } from '../ipc';
+import { deployPreflight, runCodeDeploy, runFullDeploy, runDbDeploy, runCodePull, runDbPull, cancelDeploy, onLogEntry, listLocalDir } from '../ipc';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -18,7 +18,85 @@ const LEVEL_CLASS = {
   warning: 'sgd-log__line--warning',
   error:   'sgd-log__line--error',
 };
+// ─── Direction toggle ────────────────────────────────────────────────────────────
 
+function DirectionToggle({ direction, onChange }) {
+  return (
+    <div className="sgd-direction-toggle">
+      <button
+        type="button"
+        className={`sgd-direction-toggle__btn${direction === 'push' ? ' sgd-direction-toggle__btn--active' : ''}`}
+        onClick={() => onChange('push')}
+      >
+        <span className="sgd-direction-toggle__arrow">↑</span> Push to server
+      </button>
+      <button
+        type="button"
+        className={`sgd-direction-toggle__btn${direction === 'pull' ? ' sgd-direction-toggle__btn--active sgd-direction-toggle__btn--pull' : ''}`}
+        onClick={() => onChange('pull')}
+      >
+        <span className="sgd-direction-toggle__arrow">↓</span> Pull from server
+      </button>
+    </div>
+  );
+}
+
+// ─── Pull danger zone ──────────────────────────────────────────────────────────────
+
+function PullDangerZone({ confirmed, onConfirmChange, mode, productionDomain }) {
+  const isDb = mode === 'db';
+  return (
+    <div className="sgd-deploy-danger-zone">
+      <div className="sgd-deploy-danger-zone__header">
+        <span className="sgd-deploy-danger-zone__icon">⚠</span>
+        <h3 className="sgd-deploy-danger-zone__title">
+          {isDb ? 'Database pull — read carefully before proceeding' : 'Code pull — read carefully before proceeding'}
+        </h3>
+      </div>
+      <div className="sgd-deploy-danger-zone__body">
+        <p className="sgd-deploy-danger-zone__lead">
+          {isDb
+            ? <>This will <strong>overwrite your local database</strong> with the one from the production server. 
+                Your local database URL will be swapped back to your local domain automatically.</>
+            : <>This will <strong>overwrite your local wp-content folders</strong> with files from the production server. 
+                Your current local files will be backed up first.</>}
+        </p>
+        <ul className="sgd-deploy-danger-zone__list">
+          <li>
+            <span className="sgd-dz-bullet sgd-dz-bullet--safe">🛡</span>
+            <span>
+              {isDb
+                ? <><strong>Your local database will be backed up</strong> to <code>wp-content/sgd-backups/local/</code> before it is overwritten.</>
+                : <><strong>Your local files will be backed up</strong> to <code>wp-content/sgd-backups/local/</code> before they are overwritten.</>}
+            </span>
+          </li>
+          <li>
+            <span className="sgd-dz-bullet sgd-dz-bullet--danger">✕</span>
+            <span>
+              {isDb
+                ? <>Your <strong>local database</strong> will be replaced with the production database from <strong>{productionDomain || 'the server'}</strong>. <strong>Uncommitted local DB changes will be lost.</strong></>
+                : <>Your <strong>local theme and plugin files</strong> will be replaced. <strong>Uncommitted local code changes will be overwritten.</strong>  Make sure you have committed or stashed your work.</>
+              }
+            </span>
+          </li>
+        </ul>
+        <label className="sgd-deploy-danger-zone__confirm">
+          <input
+            type="checkbox"
+            checked={confirmed}
+            onChange={(e) => onConfirmChange(e.target.checked)}
+            className="sgd-deploy-danger-zone__checkbox"
+          />
+          <span>
+            {isDb
+              ? <>I understand my local database will be backed up then overwritten from <strong>{productionDomain || 'production'}</strong>.</>
+              : <>I understand my local files will be backed up then overwritten from <strong>{productionDomain || 'production'}</strong>.</>}
+          </span>
+        </label>
+      </div>
+    </div>
+  );
+}
 // ─── Mode selector ────────────────────────────────────────────────────────────
 
 // SVG cylinder icon — reliable cross-platform substitute for the emoji
@@ -496,6 +574,7 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
   const [preflightError, setPreflightError]      = useState(null);
 
   // Config state
+  const [direction, setDirection]         = useState('push');  // 'push' | 'pull'
   const [mode, setMode]                   = useState(defaultMode === 'full' ? 'full' : defaultMode === 'db' ? 'db' : 'code');
   const [selectedPaths, setSelectedPaths] = useState([...DEFAULT_SELECTED_PATHS]);
   const [dbConfirmed, setDbConfirmed]     = useState(false);
@@ -553,17 +632,31 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
     setArchiveFormat('zip');
   }
 
+  function handleDirectionChange(d) {
+    setDirection(d);
+    setDbConfirmed(false);
+    setMode(d === 'pull' ? 'code' : (defaultMode === 'full' ? 'full' : defaultMode === 'db' ? 'db' : 'code'));
+    setSelectedPaths([...DEFAULT_SELECTED_PATHS]);
+  }
+
   async function handleDeploy() {
     setRunning(true);
     setResult(null);
     setLogEntries([]);
     setPhase('deploying');
 
-    const res = mode === 'full'
-      ? await runFullDeploy(profileId, { confirmed: true, excludeDirs, format: archiveFormat })
-      : mode === 'db'
-        ? await runDbDeploy(profileId, { confirmed: true })
-        : await runCodeDeploy(profileId, { paths: selectedPaths, format: archiveFormat });
+    let res;
+    if (direction === 'pull') {
+      res = mode === 'db'
+        ? await runDbPull(profileId, { confirmed: true })
+        : await runCodePull(profileId, { targets: selectedPaths });
+    } else {
+      res = mode === 'full'
+        ? await runFullDeploy(profileId, { confirmed: true, excludeDirs, format: archiveFormat })
+        : mode === 'db'
+          ? await runDbDeploy(profileId, { confirmed: true })
+          : await runCodeDeploy(profileId, { paths: selectedPaths, format: archiveFormat });
+    }
 
     setResult(res);
     setRunning(false);
@@ -578,6 +671,7 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
     setPhase('config');
     setResult(null);
     setLogEntries([]);
+    setDirection('push');
     setDbConfirmed(preflight ? Boolean(preflight.resolvedConfirmDefault) : false);
     setSelectedPaths([...DEFAULT_SELECTED_PATHS]);
     setArchiveFormat('zip');
@@ -589,8 +683,12 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
     !running &&
     !preflightLoading &&
     preflight &&
-    (mode === 'db' || preflight.wpContentReachable) &&
-    (mode === 'full' ? dbConfirmed : mode === 'db' ? dbConfirmed : selectedPaths.length > 0)
+    (direction === 'pull' || mode === 'db' || preflight.wpContentReachable) &&
+    (
+      direction === 'pull'
+        ? (dbConfirmed && (mode === 'db' || selectedPaths.length > 0))
+        : (mode === 'full' ? dbConfirmed : mode === 'db' ? dbConfirmed : selectedPaths.length > 0)
+    )
   );
 
   // ── Header ─────────────────────────────────────────────────────────────────
@@ -631,14 +729,18 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
         {result && (
           <div className={`sgd-alert ${result.success ? 'sgd-alert--success' : isCancelled ? 'sgd-alert--warning' : 'sgd-alert--danger'}`}>
             {result.success
-              ? mode === 'full'
-                ? `Full deploy complete — ${(result.data?.synced || []).length} directories synced.`
-                : mode === 'db'
-                  ? 'Database deploy complete — remote database overwritten.'
-                  : `Code deploy complete — synced: ${(result.data?.targets || []).join(', ')}`
+              ? direction === 'pull'
+                ? mode === 'db'
+                  ? 'Database pull complete — local database updated from server.'
+                  : `Code pull complete — pulled: ${(result.data?.targets || []).join(', ')}`
+                : mode === 'full'
+                  ? `Full deploy complete — ${(result.data?.synced || []).length} directories synced.`
+                  : mode === 'db'
+                    ? 'Database deploy complete — remote database overwritten.'
+                    : `Code deploy complete — synced: ${(result.data?.targets || []).join(', ')}`
               : isCancelled
-                ? 'Deploy cancelled. Your site was not changed.'
-                : `Deploy failed: ${result.error}`}
+                ? `${direction === 'pull' ? 'Pull' : 'Deploy'} cancelled. Your site was not changed.`
+                : `${direction === 'pull' ? 'Pull' : 'Deploy'} failed: ${result.error}`}
           </div>
         )}
 
@@ -646,7 +748,7 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
         {running && (
           <div className="sgd-deploy-stop-bar">
             <button className="sgd-btn sgd-btn--danger sgd-btn--sm" onClick={handleStop}>
-              ■ Stop deploy
+              ■ Stop {direction === 'pull' ? 'pull' : 'deploy'}
             </button>
           </div>
         )}
@@ -690,8 +792,39 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
 
       {preflight && !preflightLoading && (
         <>
+          {/* ── Direction toggle ── */}
+          <DirectionToggle direction={direction} onChange={handleDirectionChange} />
+
           {/* ── Mode selector ── */}
-          <ModeTabs mode={mode} onChange={handleModeChange} />
+          {direction === 'push'
+            ? <ModeTabs mode={mode} onChange={handleModeChange} />
+            : (
+              <div className="sgd-deploy-mode-tabs">
+                <button
+                  type="button"
+                  className={`sgd-deploy-mode-tab${mode === 'code' ? ' sgd-deploy-mode-tab--active' : ''}`}
+                  onClick={() => handleModeChange('code')}
+                >
+                  <span className="sgd-deploy-mode-tab__icon">📦</span>
+                  <span className="sgd-deploy-mode-tab__text">
+                    <strong>Code-only</strong>
+                    <small>Pull selected wp-content folders</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={`sgd-deploy-mode-tab${mode === 'db' ? ' sgd-deploy-mode-tab--active sgd-deploy-mode-tab--full-active' : ''}`}
+                  onClick={() => handleModeChange('db')}
+                >
+                  <span className="sgd-deploy-mode-tab__icon"><DbIcon /></span>
+                  <span className="sgd-deploy-mode-tab__text">
+                    <strong>Database only</strong>
+                    <small>Pull remote DB → overwrite local</small>
+                  </span>
+                </button>
+              </div>
+            )
+          }
 
           {/* ── Deploy summary ── */}
           <SummaryCard
@@ -703,22 +836,26 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
           {/* ── Code-only: directory tree picker ── */}
           {mode === 'code' && (
             <div className="sgd-card sgd-deploy-targets-card">
-              <h3 className="sgd-deploy-info-card__title">Directories to deploy</h3>
+              <h3 className="sgd-deploy-info-card__title">
+                {direction === 'pull' ? 'Directories to pull' : 'Directories to deploy'}
+              </h3>
               <p className="sgd-dir-tree__hint">
-                Check top-level folders to deploy the whole directory, or expand › to pick specific sub-folders.
+                {direction === 'pull'
+                  ? 'Select folders to pull from the server. Your local copies will be backed up first.'
+                  : 'Check top-level folders to deploy the whole directory, or expand › to pick specific sub-folders.'}
               </p>
               <DirTreePicker
                 profileId={profileId}
                 preflight={preflight}
                 selectedPaths={selectedPaths}
                 onChange={setSelectedPaths}
-                disabled={!preflight.wpContentReachable}
+                disabled={direction === 'push' && !preflight.wpContentReachable}
               />
             </div>
           )}
 
           {/* ── Full deploy: exclusion list + danger zone ── */}
-          {mode === 'full' && (
+          {direction === 'push' && mode === 'full' && (
             <>
               <ExcludeDirectories
                 dirs={preflight.wpContentDirs || []}
@@ -733,8 +870,8 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
             </>
           )}
 
-          {/* ── Database-only: danger zone ── */}
-          {mode === 'db' && (
+          {/* ── Database-only push: danger zone ── */}
+          {direction === 'push' && mode === 'db' && (
             <FullDeployDangerZone
               mode="db"
               dbConfirmed={dbConfirmed}
@@ -743,8 +880,18 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
             />
           )}
 
+          {/* ── Pull danger zone ── */}
+          {direction === 'pull' && (
+            <PullDangerZone
+              mode={mode}
+              confirmed={dbConfirmed}
+              onConfirmChange={setDbConfirmed}
+              productionDomain={preflight.productionDomain}
+            />
+          )}
+
           {/* ── Archive format ── */}
-          {mode !== 'db' && <ArchiveFormatPicker value={archiveFormat} onChange={setArchiveFormat} />}
+          {direction === 'push' && mode !== 'db' && <ArchiveFormatPicker value={archiveFormat} onChange={setArchiveFormat} />}
 
           {/* ── Local source ── */}
           <div className="sgd-card sgd-deploy-info-card">
@@ -762,7 +909,7 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
           </div>
 
           {/* wp-content not found warning */}
-          {!preflight.wpContentReachable && (
+          {direction === 'push' && !preflight.wpContentReachable && (
             <div className="sgd-alert sgd-alert--danger">
               Local wp-content is not accessible. Make sure the Local site is running
               and the site path has not been moved.
@@ -772,31 +919,48 @@ export default function DeployScreen({ profileId, defaultMode, onViewLogs, onBac
           {/* ── Deploy action bar ── */}
           <div className="sgd-deploy-actions">
             <button
-              className={`sgd-btn sgd-btn--lg ${mode === 'full' || mode === 'db' ? 'sgd-btn--danger' : 'sgd-btn--primary'}`}
+              className={`sgd-btn sgd-btn--lg ${
+                direction === 'pull'
+                  ? 'sgd-btn--warning'
+                  : (mode === 'full' || mode === 'db') ? 'sgd-btn--danger' : 'sgd-btn--primary'
+              }`}
               onClick={handleDeploy}
               disabled={!canDeploy}
             >
-              {mode === 'full'
-                ? '⚡ Run full deploy'
-                : mode === 'db'
-                  ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><DbIcon size={15} /> Deploy database</span>
-                  : '▶ Deploy code'}
+              {direction === 'pull'
+                ? mode === 'db'
+                  ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><DbIcon size={15} /> Pull database</span>
+                  : '↓ Pull code'
+                : mode === 'full'
+                  ? '⚡ Run full deploy'
+                  : mode === 'db'
+                    ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><DbIcon size={15} /> Deploy database</span>
+                    : '▶ Deploy code'
+              }
             </button>
 
             <span className="sgd-deploy-actions__hint">
-              {mode === 'db'
-                ? dbConfirmed
-                  ? 'Confirmation received. Ready to deploy database.'
-                  : 'Check the confirmation box above to enable deploy.'
-                : !preflight.wpContentReachable
-                  ? 'Local wp-content is not accessible.'
-                  : mode === 'full'
-                    ? dbConfirmed
-                      ? 'Confirmation received. Ready to deploy.'
-                      : 'Check the confirmation box above to enable deploy.'
+              {direction === 'pull'
+                ? !dbConfirmed
+                  ? 'Check the confirmation box above to enable pull.'
+                  : mode === 'db'
+                    ? 'Ready to pull database from server.'
                     : selectedPaths.length === 0
-                      ? 'Select at least one directory to deploy.'
-                      : `Will sync: ${selectedPaths.join(', ')}`
+                      ? 'Select at least one directory to pull.'
+                      : `Will pull: ${selectedPaths.join(', ')}`
+                : mode === 'db'
+                  ? dbConfirmed
+                    ? 'Confirmation received. Ready to deploy database.'
+                    : 'Check the confirmation box above to enable deploy.'
+                  : !preflight.wpContentReachable
+                    ? 'Local wp-content is not accessible.'
+                    : mode === 'full'
+                      ? dbConfirmed
+                        ? 'Confirmation received. Ready to deploy.'
+                        : 'Check the confirmation box above to enable deploy.'
+                      : selectedPaths.length === 0
+                        ? 'Select at least one directory to deploy.'
+                        : `Will sync: ${selectedPaths.join(', ')}`
               }
             </span>
           </div>

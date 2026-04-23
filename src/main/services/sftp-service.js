@@ -130,6 +130,89 @@ async function uploadFile(profile, localPath, remotePath, onProgress, cancelToke
   }
 }
 
+// ─── Download ──────────────────────────────────────────────────────────────────
+
+/**
+ * Download a remote file to a local path via SFTP.
+ * Automatically creates the local parent directory if it does not exist.
+ *
+ * @param {object}   profile
+ * @param {string}   remotePath   Absolute path on the remote server.
+ * @param {string}   localPath    Absolute path to write locally.
+ * @param {function} [onProgress] Called with { bytes, total, percent }.
+ * @param {object}   [cancelToken]
+ * @returns {Promise<
+ *   { success: true,  data: { localPath: string } } |
+ *   { success: false, error: string }
+ * >}
+ */
+async function downloadFile(profile, remotePath, localPath, onProgress, cancelToken) {
+  const privateKeyPath = keyManager.getPrivateKeyPath(profile.keyId);
+  if (!privateKeyPath) {
+    return _err(
+      'SSH private key not found. Open the profile and regenerate the key.'
+    );
+  }
+
+  let privateKey;
+  try {
+    privateKey = await fs.promises.readFile(privateKeyPath, 'utf8');
+  } catch (err) {
+    return _err(`Cannot read SSH private key: ${err.message}`);
+  }
+
+  const sftp = new SftpClient('sgd-sftp-dl');
+
+  if (cancelToken && cancelToken.cancelPromise) {
+    cancelToken.cancelPromise.catch(() => {
+      try { sftp.end(); } catch (_) {}
+    });
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(localPath), { recursive: true });
+
+    await sftp.connect({
+      host:              profile.sshHost,
+      port:              Number(profile.sshPort) || 18765,
+      username:          profile.sshUser,
+      privateKey,
+      keepaliveInterval: 10_000,
+      readyTimeout:      20_000,
+      hostVerifier:      () => true,
+    });
+
+    // Get remote file size for progress tracking
+    let totalBytes = 0;
+    try {
+      const stat = await sftp.stat(remotePath);
+      totalBytes = stat.size || 0;
+    } catch (_) {}
+
+    await sftp.fastGet(remotePath, localPath, {
+      chunkSize:   1024 * 1024,
+      concurrency: 6,
+      step: (transferred, _chunk, total) => {
+        if (onProgress) {
+          const t = total || totalBytes;
+          onProgress({
+            bytes:   transferred,
+            total:   t,
+            percent: t > 0 ? Math.round((transferred / t) * 100) : 0,
+          });
+        }
+      },
+    });
+
+    return _ok({ localPath });
+
+  } catch (err) {
+    return _err(_friendlyError(err));
+  } finally {
+    try { await sftp.end(); } catch (_) {}
+  }
+}
+
 // ─── Error mapping ─────────────────────────────────────────────────────────────
 
 function _friendlyError(err) {
@@ -146,5 +229,5 @@ function _friendlyError(err) {
   return err.message || String(err);
 }
 
-module.exports = { uploadFile };
+module.exports = { uploadFile, downloadFile };
 

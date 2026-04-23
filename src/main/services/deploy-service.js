@@ -37,6 +37,7 @@
 
 const path   = require('path');
 const fs     = require('fs');
+const os     = require('os');
 const { v4: uuidv4 } = require('uuid');
 
 const localAdapter  = require('../adapters/local-app');
@@ -1190,11 +1191,497 @@ async function runDbDeploy(profile, options = {}, onLog) {
   }
 }
 
+// ─── Pull backup path helper ──────────────────────────────────────────────────
+
+/**
+ * Build the local backup path for a pull operation.
+ * Structure: {wpContentPath}/sgd-backups/local/{MM-DD-YY}/{HH-MM-SS-AM|PM}/
+ *
+ * @param {string} wpContentPath  Absolute path to wp-content on this machine.
+ * @param {string} type           'db' or 'files'
+ * @param {string} filename       e.g. 'database.sql' or 'themes.zip'
+ * @returns {{ dir: string, filePath: string, dateLabel: string, timeLabel: string }}
+ */
+function _pullBackupPath(wpContentPath, type, filename) {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const month = pad(now.getMonth() + 1);
+  const day   = pad(now.getDate());
+  const year  = String(now.getFullYear()).slice(-2);
+  const dateLabel = `${month}-${day}-${year}`;
+
+  let hours = now.getHours();
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  const timeLabel = `${pad(hours)}-${pad(now.getMinutes())}-${pad(now.getSeconds())}-${ampm}`;
+
+  const dir = path.join(wpContentPath, 'sgd-backups', 'local', dateLabel, timeLabel, type);
+  return { dir, filePath: path.join(dir, filename), dateLabel, timeLabel };
+}
+
+// ─── Code pull ────────────────────────────────────────────────────────────────
+
+/**
+ * Pull selected wp-content directories from the remote server to local.
+ *
+ * Pipeline:
+ *   1.  Validate profile + local paths
+ *   2.  Backup local target directories → wp-content/sgd-backups/local/{date}/{time}/files/
+ *   3.  SSH: tar the selected remote dirs into a temp zip on the server
+ *   4.  SFTP download the zip to local temp
+ *   5.  Unzip over the local wp-content directories (Node built-in unzip via AdmZip)
+ *   6.  Remote + local temp cleanup
+ *
+ * @param {object}   profile
+ * @param {object}   options
+ * @param {string[]} [options.targets]  Default: ['themes', 'plugins']
+ * @param {function} onLog
+ */
+async function runCodePull(profile, options = {}, onLog) {
+  const pid   = profile.id || null;
+  const runId = uuidv4();
+  const emit  = (lvl, msg, meta) =>
+    _emit(lvl, msg, onLog, pid, { runId, actionType: 'code_pull', profileId: pid, ...(meta && { metadata: meta }) });
+
+  let sshConn       = null;
+  let remoteTempDir = null;
+  let _outcome      = 'failure';
+  let _outcomeMeta  = null;
+
+  const token = makeToken();
+  if (pid) activeDeployTokens.set(pid, token);
+
+  logger.startRun(pid, 'code_pull', runId, {
+    host: `${profile.sshHost}:${profile.sshPort || 18765}`,
+  });
+
+  try {
+    emit('info', `── Code pull started ── ${profile.name} ──`);
+    emit('info', `Run ID: ${runId.slice(0, 8)}`);
+
+    if (!profile.localSiteId) {
+      return _err('Profile is not linked to a Local site. Re-run the setup wizard.');
+    }
+
+    const wpContentPath = localAdapter.getSiteWpContentPath(profile.localSiteId);
+    if (!wpContentPath || !fs.existsSync(wpContentPath)) {
+      return _err(`Local wp-content not found: ${wpContentPath || '(unknown)'}`);
+    }
+
+    const remoteWebRootVal = (profile.remoteWebRoot || '').replace(/\\/g, '/').replace(/\/$/, '');
+    if (!remoteWebRootVal || !remoteWebRootVal.startsWith('/')) {
+      return _err('Remote web root is not set or is not a valid absolute path.');
+    }
+
+    const requestedTargets = Array.isArray(options.targets) && options.targets.length > 0
+      ? options.targets
+      : ['themes', 'plugins'];
+
+    emit('info', `Targets: ${requestedTargets.join(', ')}`);
+    emit('info', `Remote web root: ${remoteWebRootVal}`);
+
+    // ── 1. Backup local target directories ───────────────────────────────────
+    emit('info', '── Backing up local directories before pull…');
+    const backupMeta = _pullBackupPath(wpContentPath, 'files', 'placeholder');
+    emit('info', `  Backup folder: sgd-backups/local/${backupMeta.dateLabel}/${backupMeta.timeLabel}/files/`);
+
+    for (const target of requestedTargets) {
+      const subDir    = KNOWN_TARGETS[target] || target;
+      const localPath = path.join(wpContentPath, subDir);
+      if (!fs.existsSync(localPath)) {
+        emit('info', `  Skipping backup of "${subDir}" — not present locally yet`);
+        continue;
+      }
+      const bk = _pullBackupPath(wpContentPath, 'files', `${subDir}.zip`);
+      fs.mkdirSync(bk.dir, { recursive: true });
+      emit('info', `  Backing up ${subDir}…`);
+      const bkResult = await archiverSvc.createArchive(
+        [{ localPath, archiveName: subDir }],
+        bk.filePath,
+        'zip',
+        null
+      );
+      if (!bkResult.success) {
+        return _err(`Pre-pull backup failed for "${subDir}": ${bkResult.error}`);
+      }
+      emit('success', `  ✓ Backed up ${subDir} (${_fmt(bkResult.data.sizeBytes)})`);
+    }
+
+    // ── 2. Open SSH ───────────────────────────────────────────────────────────
+    emit('info', '── Opening SSH connection…');
+    const connResult = await sshService.openConnection(profile);
+    if (!connResult.success) return _err(`SSH connection failed: ${connResult.error}`);
+    sshConn = connResult.data;
+    emit('success', 'SSH connection open');
+
+    // ── 3. Zip selected dirs on remote ────────────────────────────────────────
+    remoteTempDir = `/tmp/sgd-pull-${runId}`;
+    const remoteZipPath = `${remoteTempDir}/pull.zip`;
+    emit('info', '── Creating archive on remote server…');
+
+    let mkdirOut = '';
+    await sshConn.exec(`mkdir -p ${_q(remoteTempDir)}`, (c) => { mkdirOut += c; });
+
+    // Build list of remote dirs that actually exist
+    const remoteTargets = [];
+    for (const target of requestedTargets) {
+      const subDir     = KNOWN_TARGETS[target] || target;
+      const remotePath = `${remoteWebRootVal}/wp-content/${subDir}`;
+      let existOut = '';
+      await sshConn.exec(`[ -d ${_q(remotePath)} ] && echo yes || echo no`, (c) => { existOut += c; });
+      if (existOut.trim() === 'yes') {
+        remoteTargets.push({ subDir, remotePath });
+        emit('info', `  ✓ Found remote: wp-content/${subDir}`);
+      } else {
+        emit('warning', `  Skipping "${subDir}" — not found on remote`);
+      }
+    }
+
+    if (remoteTargets.length === 0) {
+      return _err('None of the selected directories exist on the remote server.');
+    }
+
+    if (token.isCancelled) throw new DeployCancelledError();
+
+    // zip -r pull.zip themes/ plugins/ (relative to wp-content)
+    const remoteWpContent = `${remoteWebRootVal}/wp-content`;
+    const zipArgs = remoteTargets.map((t) => _q(t.subDir)).join(' ');
+    let zipOut = '';
+    const zipResult = await Promise.race([
+      sshConn.exec(
+        `cd ${_q(remoteWpContent)} && zip -r ${_q(remoteZipPath)} ${zipArgs} 2>&1`,
+        (c) => { zipOut += c; }
+      ),
+      token.cancelPromise,
+    ]);
+
+    if (zipResult.exitCode !== 0) {
+      return _err(`Remote zip failed (exit ${zipResult.exitCode}):\n${zipOut.trim().split('\n').slice(-5).join('\n')}`);
+    }
+
+    // Get zip size for logging
+    let sizeOut = '';
+    await sshConn.exec(`stat -c %s ${_q(remoteZipPath)} 2>/dev/null || echo 0`, (c) => { sizeOut += c; });
+    const zipSize = parseInt(sizeOut.trim(), 10) || 0;
+    emit('success', `Remote archive ready: ${_fmt(zipSize)}`);
+
+    if (token.isCancelled) throw new DeployCancelledError();
+
+    // ── 4. SFTP download ──────────────────────────────────────────────────────
+    const localTempZip = path.join(os.tmpdir(), 'sgd-pull', runId, 'pull.zip');
+    fs.mkdirSync(path.dirname(localTempZip), { recursive: true });
+
+    emit('info', `Downloading from ${profile.sshHost}…`);
+    let lastPct = -1;
+
+    const dlResult = await Promise.race([
+      sftpSvc.downloadFile(
+        profile,
+        remoteZipPath,
+        localTempZip,
+        ({ percent }) => {
+          const band = Math.floor(percent / 25) * 25;
+          if (band > lastPct) {
+            lastPct = band;
+            emit('info', `  Download: ${percent}%`);
+          }
+        },
+        token
+      ),
+      token.cancelPromise,
+    ]);
+
+    if (!dlResult.success) return _err(`Download failed: ${dlResult.error}`);
+    emit('success', `Downloaded: ${_fmt(fs.statSync(localTempZip).size)}`);
+
+    if (token.isCancelled) throw new DeployCancelledError();
+
+    // ── 5. Extract over local wp-content ─────────────────────────────────────
+    emit('info', '── Extracting to local wp-content…');
+    const AdmZip = require('adm-zip');
+    const zip = new AdmZip(localTempZip);
+    zip.extractAllTo(wpContentPath, /* overwrite */ true);
+    emit('success', `Extracted to ${wpContentPath}`);
+
+    // ── 6. Remote cleanup ─────────────────────────────────────────────────────
+    await sshConn.exec(`rm -rf ${_q(remoteTempDir)}`);
+    emit('info', 'Remote temp files removed');
+
+    profileStore.markDeployed(pid);
+
+    emit('success', `── Pull complete! (${remoteTargets.map((t) => t.subDir).join(', ')}) ──`);
+    _outcome     = 'success';
+    _outcomeMeta = { targets: remoteTargets.map((t) => t.subDir) };
+    return _ok({ runId, targets: remoteTargets.map((t) => t.subDir) });
+
+  } catch (err) {
+    if (err instanceof DeployCancelledError) {
+      emit('warning', '── Pull cancelled by user ──');
+      _outcome     = 'cancelled';
+      _outcomeMeta = { cancelled: true };
+      if (remoteTempDir && sshConn) {
+        try { await sshConn.exec(`rm -rf ${_q(remoteTempDir)}`); } catch (_) {}
+      }
+      return _err('Pull cancelled');
+    }
+    _outcomeMeta = { error: err.message };
+    emit('error', `Unexpected error: ${err.message}`);
+    return _err(`Unexpected error during pull: ${err.message}`);
+
+  } finally {
+    logger.finishRun(pid, runId, _outcome, _outcomeMeta);
+    if (pid) activeDeployTokens.delete(pid);
+    if (sshConn) { try { await sshConn.end(); } catch (_) {} }
+    // Clean up local temp zip
+    try {
+      const dir = path.join(os.tmpdir(), 'sgd-pull', runId);
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch (_) {}
+  }
+}
+
+// ─── DB pull ──────────────────────────────────────────────────────────────────
+
+/**
+ * Pull the remote database to local, backing up local DB first.
+ *
+ * Pipeline:
+ *   1.  Validate profile
+ *   2.  Export local DB → wp-content/sgd-backups/local/{date}/{time}/db/database.sql
+ *   3.  SSH: export remote DB → /tmp/sgd-pull-{runId}/database.sql
+ *   4.  SFTP download the .sql
+ *   5.  Import into local MySQL (WP-CLI → mysql CLI fallback)
+ *   6.  Search-replace: production domain → local domain
+ *   7.  Remote temp cleanup
+ *
+ * @param {object}   profile
+ * @param {object}   options
+ * @param {boolean}  options.confirmed  Must be true.
+ * @param {function} onLog
+ */
+async function runDbPull(profile, options = {}, onLog) {
+  if (!options || !options.confirmed) {
+    return _err('Pull cancelled — confirmation not provided.');
+  }
+
+  const pid   = profile.id || null;
+  const runId = uuidv4();
+  const emit  = (lvl, msg, meta) =>
+    _emit(lvl, msg, onLog, pid, { runId, actionType: 'db_pull', profileId: pid, ...(meta && { metadata: meta }) });
+  const dbLog = (entry) => {
+    const rich = { ...entry, runId, actionType: 'db_pull', profileId: pid };
+    onLog && onLog(rich);
+    logger.appendEntry(pid, rich);
+  };
+
+  let sshConn       = null;
+  let remoteTempDir = null;
+  let _outcome      = 'failure';
+  let _outcomeMeta  = null;
+
+  const token = makeToken();
+  if (pid) activeDeployTokens.set(pid, token);
+
+  logger.startRun(pid, 'db_pull', runId, {
+    host: `${profile.sshHost}:${profile.sshPort || 18765}`,
+    mode: 'db_pull',
+  });
+
+  try {
+    emit('info',    `── DB pull started ── ${profile.name} ──`);
+    emit('info',    `Run ID: ${runId.slice(0, 8)}`);
+    emit('warning', 'Local database will be backed up then overwritten from the remote server.');
+
+    if (!profile.localSiteId) {
+      return _err('Profile is not linked to a Local site. Re-run the setup wizard.');
+    }
+
+    const wpContentPath = localAdapter.getSiteWpContentPath(profile.localSiteId);
+    if (!wpContentPath || !fs.existsSync(wpContentPath)) {
+      return _err(`Local wp-content not found: ${wpContentPath || '(unknown)'}`);
+    }
+
+    const remoteWebRootVal = (profile.remoteWebRoot || '').replace(/\\/g, '/').replace(/\/$/, '');
+    if (!remoteWebRootVal || !remoteWebRootVal.startsWith('/')) {
+      return _err('Remote web root is not set or is not a valid absolute path.');
+    }
+
+    // ── 1. Backup local DB ────────────────────────────────────────────────────
+    emit('info', '── Backing up local database…');
+    const bk = _pullBackupPath(wpContentPath, 'db', 'database.sql');
+    fs.mkdirSync(bk.dir, { recursive: true });
+
+    const localBackupResult = await dbSvc.exportLocalDatabase(
+      profile.localSiteId,
+      bk.filePath,
+      dbLog
+    );
+    if (!localBackupResult.success) {
+      return _err(`Pre-pull local DB backup failed:\n${localBackupResult.error}`);
+    }
+    emit('success', `✓ Local DB backed up → sgd-backups/local/${bk.dateLabel}/${bk.timeLabel}/db/database.sql`);
+
+    // ── 2. Open SSH ───────────────────────────────────────────────────────────
+    emit('info', '── Opening SSH connection…');
+    const connResult = await sshService.openConnection(profile);
+    if (!connResult.success) return _err(`SSH connection failed: ${connResult.error}`);
+    sshConn = connResult.data;
+    emit('success', 'SSH connection open');
+
+    // ── 3. Export remote DB ───────────────────────────────────────────────────
+    remoteTempDir = `/tmp/sgd-pull-${runId}`;
+    const remoteSqlPath = `${remoteTempDir}/database.sql`;
+    emit('info', '── Exporting remote database…');
+
+    await sshConn.exec(`mkdir -p ${_q(remoteTempDir)} 2>&1`);
+
+    if (token.isCancelled) throw new DeployCancelledError();
+
+    // Try WP-CLI first, then mysqldump fallback (same as backup logic)
+    let exportOut = '';
+    let exportRes = await Promise.race([
+      sshConn.exec(
+        `wp db export ${_q(remoteSqlPath)} --path=${_q(remoteWebRootVal)} --allow-root 2>&1`,
+        (c) => { exportOut += c; }
+      ),
+      token.cancelPromise,
+    ]);
+
+    if (exportRes.exitCode !== 0) {
+      emit('warning', `  WP-CLI export failed: ${exportOut.trim().split('\n').slice(-2).join(' | ')}`);
+      emit('info', '  Falling back to remote mysqldump…');
+
+      const creds = await dbSvc._readRemoteWpCreds ? null : null; // private — use backupRemoteDatabase pattern
+      exportOut = '';
+      exportRes = await Promise.race([
+        sshConn.exec(
+          // Use the same approach as backupRemoteDatabase — read creds from wp-config via cat+parse
+          `eval $(php -r "` +
+          `\\$c=file_get_contents('${remoteWebRootVal}/wp-config.php');` +
+          `preg_match(\"/define\\\\s*\\\\(\\\\s*\\\\'DB_NAME\\\\'\\\\s*,\\\\s*\\\\'([^\\\\']+)/\",\\$c,\\$m); echo 'DB_NAME='.\\\$m[1].'\\n';` +
+          `preg_match(\"/define\\\\s*\\\\(\\\\s*\\\\'DB_USER\\\\'\\\\s*,\\\\s*\\\\'([^\\\\']+)/\",\\$c,\\$m); echo 'DB_USER='.\\\$m[1].'\\n';` +
+          `preg_match(\"/define\\\\s*\\\\(\\\\s*\\\\'DB_PASSWORD\\\\'\\\\s*,\\\\s*\\\\'([^\\\\']*)/\",\\$c,\\$m); echo 'DB_PASSWORD='.\\\$m[1].'\\n';` +
+          `preg_match(\"/define\\\\s*\\\\(\\\\s*\\\\'DB_HOST\\\\'\\\\s*,\\\\s*\\\\'([^\\\\']+)/\",\\$c,\\$m); echo 'DB_HOST='.\\\$m[1].'\\n';` +
+          `") && MYSQL_PWD="$DB_PASSWORD" mysqldump -h"$DB_HOST" -u"$DB_USER" --single-transaction --routines --triggers --no-tablespaces "$DB_NAME" > ${_q(remoteSqlPath)} 2>&1`,
+          (c) => { exportOut += c; }
+        ),
+        token.cancelPromise,
+      ]);
+
+      if (exportRes.exitCode !== 0) {
+        return _err(`Remote DB export failed:\n${exportOut.trim().split('\n').slice(-5).join('\n')}`);
+      }
+    }
+
+    // Verify size
+    let szOut = '';
+    await sshConn.exec(`stat -c %s ${_q(remoteSqlPath)} 2>/dev/null || echo 0`, (c) => { szOut += c; });
+    const sqlSize = parseInt(szOut.trim(), 10) || 0;
+    if (sqlSize === 0) {
+      return _err('Remote DB export produced an empty file. Export may have failed silently.');
+    }
+    emit('success', `Remote DB exported: ${_fmt(sqlSize)}`);
+
+    if (token.isCancelled) throw new DeployCancelledError();
+
+    // ── 4. SFTP download ──────────────────────────────────────────────────────
+    const localTempSql = path.join(os.tmpdir(), 'sgd-pull', runId, 'database.sql');
+    fs.mkdirSync(path.dirname(localTempSql), { recursive: true });
+
+    emit('info', `Downloading SQL from ${profile.sshHost}…`);
+    let lastPct = -1;
+
+    const dlResult = await Promise.race([
+      sftpSvc.downloadFile(
+        profile,
+        remoteSqlPath,
+        localTempSql,
+        ({ percent }) => {
+          const band = Math.floor(percent / 25) * 25;
+          if (band > lastPct) {
+            lastPct = band;
+            emit('info', `  Download: ${percent}%`);
+          }
+        },
+        token
+      ),
+      token.cancelPromise,
+    ]);
+
+    if (!dlResult.success) return _err(`SQL download failed: ${dlResult.error}`);
+    emit('success', `SQL downloaded: ${_fmt(fs.statSync(localTempSql).size)}`);
+
+    if (token.isCancelled) throw new DeployCancelledError();
+
+    // ── 5. Import into local DB ───────────────────────────────────────────────
+    emit('info', '── Importing into local database…');
+    const importResult = await dbSvc.importLocalDatabase(
+      profile.localSiteId,
+      localTempSql,
+      dbLog
+    );
+    if (!importResult.success) return _err(importResult.error);
+
+    // ── 6. Search-replace: production → local ─────────────────────────────────
+    emit('info', '── Running search-replace…');
+    const productionDomain = (profile.productionDomain || '').replace(/\/$/, '');
+    const localDomain      = localAdapter.getSiteLocalDomain(profile.localSiteId) || '';
+
+    if (productionDomain && localDomain) {
+      await dbSvc.runLocalSearchReplace(
+        profile.localSiteId,
+        productionDomain,
+        localDomain,
+        dbLog
+      );
+    } else {
+      emit('warning', 'Skipping search-replace — production domain or local domain not set in profile.');
+    }
+
+    // ── 7. Remote cleanup ─────────────────────────────────────────────────────
+    emit('info', 'Cleaning up remote temp files…');
+    await sshConn.exec(`rm -rf ${_q(remoteTempDir)}`);
+
+    profileStore.markDeployed(pid);
+
+    emit('success', '── DB pull complete! ──');
+    _outcome     = 'success';
+    _outcomeMeta = {};
+    return _ok({ runId });
+
+  } catch (err) {
+    if (err instanceof DeployCancelledError) {
+      emit('warning', '── Pull cancelled by user ──');
+      _outcome     = 'cancelled';
+      _outcomeMeta = { cancelled: true };
+      if (remoteTempDir && sshConn) {
+        try { await sshConn.exec(`rm -rf ${_q(remoteTempDir)}`); } catch (_) {}
+      }
+      return _err('Pull cancelled');
+    }
+    _outcomeMeta = { error: err.message };
+    emit('error', `Unexpected error: ${err.message}`);
+    return _err(`Unexpected error during DB pull: ${err.message}`);
+
+  } finally {
+    logger.finishRun(pid, runId, _outcome, _outcomeMeta);
+    if (pid) activeDeployTokens.delete(pid);
+    if (sshConn) { try { await sshConn.end(); } catch (_) {} }
+    try {
+      const dir = path.join(os.tmpdir(), 'sgd-pull', runId);
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch (_) {}
+    dbSvc.cleanupLocalSql(runId);
+  }
+}
+
 module.exports = {
   getPreflightInfo,
   runCodeDeploy,
   runFullDeploy,
   runDbDeploy,
+  runCodePull,
+  runDbPull,
   cancelDeploy,
   deleteRemoteBackups,
 };

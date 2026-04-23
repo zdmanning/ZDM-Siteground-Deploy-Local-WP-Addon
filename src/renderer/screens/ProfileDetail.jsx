@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 import {
   getProfile,
   updateProfile,
@@ -7,10 +8,15 @@ import {
   getLocalSite,
   getAllLocalSites,
   testSSHConnection,
+  testSSHConnectionDirect,
+  generateKey,
+  deleteKey,
+  rotateProfileKey,
   repairLocalSiteMysql,
   deleteRemoteBackups,
 } from '../ipc';
 import FormField from '../components/FormField';
+import CopyableCode from '../components/CopyableCode';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -582,13 +588,269 @@ function EditForm({ profile, onSaved, onCancel }) {
   );
 }
 
+// ─── Regenerate SSH key panel ─────────────────────────────────────────────────
+//
+// Flow:
+//   'keygen'    → auto-generates a NEW key pair on mount (spinner)
+//   'addkey'    → shows public key + SiteGround instructions + confirmation checkbox
+//   'testing'   → runs testSSHConnectionDirect with new keyId (spinner)
+//   'done'      → rotation committed; shows success; user clicks Done to dismiss
+//   'error'     → terminal failure (key gen or rotation failed); close only
+//
+// Old key safety:
+//   The old key is NOT deleted until after the profile record is committed AND
+//   the main process confirms no other profile (clone) shares that keyId.
+//   If the user cancels at any point before 'done', the orphaned new key is deleted.
+
+function RegenerateKeyPanel({ profile, onComplete, onCancel }) {
+  // Generate a stable UUID for the new key once on mount
+  const [newKeyId]                       = useState(() => uuidv4());
+  const [step,          setStep]         = useState('keygen'); // keygen|addkey|testing|done|error
+  const [publicKey,     setPublicKey]    = useState(null);
+  const [addConfirmed,  setAddConfirmed] = useState(false);
+  const [testStatus,    setTestStatus]   = useState('idle'); // idle|testing|failed
+  const [testError,     setTestError]    = useState(null);
+  const [testOutput,    setTestOutput]   = useState(null);
+  const [rotatedProfile, setRotatedProfile] = useState(null);
+  const [oldKeyDeleted,  setOldKeyDeleted]  = useState(false);
+  const [errorMsg,      setErrorMsg]     = useState(null);
+  const [committing,    setCommitting]   = useState(false);
+
+  // Auto-start key generation on mount
+  useEffect(() => {
+    (async () => {
+      const result = await generateKey(newKeyId);
+      if (!result || result.success === false) {
+        setErrorMsg(result?.error || 'Key generation failed.');
+        setStep('error');
+        return;
+      }
+      setPublicKey(result.data.publicKey);
+      setStep('addkey');
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleCancel() {
+    // Clean up the orphaned new key if it was generated but never committed.
+    if (step !== 'done') {
+      try { await deleteKey(newKeyId); } catch (_) {}
+    }
+    onCancel();
+  }
+
+  async function runTest() {
+    setTestStatus('testing');
+    setTestError(null);
+    setTestOutput(null);
+
+    let testResult;
+    try {
+      testResult = await testSSHConnectionDirect({
+        sshHost: profile.sshHost,
+        sshPort: profile.sshPort,
+        sshUser: profile.sshUser,
+        keyId:   newKeyId,
+      });
+    } catch (err) {
+      setTestStatus('failed');
+      setTestError(err?.message || 'Unexpected error during connection test.');
+      return;
+    }
+
+    if (!testResult.success) {
+      setTestStatus('failed');
+      setTestError(testResult.error || 'Connection refused or timed out.');
+      return;
+    }
+
+    // Connection test passed — capture output and commit the rotation.
+    setTestOutput(testResult.data?.output || null);
+    setTestStatus('idle');
+    setCommitting(true);
+
+    const rotateResult = await rotateProfileKey(profile.id, newKeyId);
+    setCommitting(false);
+
+    if (!rotateResult.success) {
+      setErrorMsg(`Key rotation failed: ${rotateResult.error}`);
+      setStep('error');
+      return;
+    }
+
+    setRotatedProfile(rotateResult.data.profile);
+    setOldKeyDeleted(rotateResult.data.oldKeyDeleted === true);
+    setStep('done');
+  }
+
+  // ── Keygen spinner ────────────────────────────────────────────────────────
+  if (step === 'keygen') {
+    return (
+      <div className="sgd-detail__edit-form">
+        <SectionTitle>Regenerate SSH key</SectionTitle>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '20px 0', color: '#495057' }}>
+          <span className="sgd-spinner sgd-spinner--sm" />
+          Generating new Ed25519 key pair…
+        </div>
+      </div>
+    );
+  }
+
+  // ── Terminal error ────────────────────────────────────────────────────────
+  if (step === 'error') {
+    return (
+      <div className="sgd-detail__edit-form">
+        <SectionTitle>Regenerate SSH key</SectionTitle>
+        <div className="sgd-alert sgd-alert--danger" style={{ marginBottom: 16 }}>
+          <strong>Error:</strong> {errorMsg}
+        </div>
+        <p style={{ fontSize: 13, color: '#6c757d', marginBottom: 16 }}>
+          Your profile has not been changed. The old SSH key is still active.
+        </p>
+        <button className="sgd-btn sgd-btn--secondary" onClick={handleCancel}>
+          Close
+        </button>
+      </div>
+    );
+  }
+
+  // ── Success ───────────────────────────────────────────────────────────────
+  if (step === 'done') {
+    return (
+      <div className="sgd-detail__edit-form">
+        <SectionTitle>Regenerate SSH key</SectionTitle>
+        <div className="sgd-alert sgd-alert--success" style={{ marginBottom: 16 }}>
+          ✓ New SSH key is active and has been saved to your profile.
+          {oldKeyDeleted
+            ? <> The old key has been removed from this machine.</>
+            : <> The old key was kept because another profile (a clone) shares it.</>
+          }
+        </div>
+        {testOutput && (
+          <div className="sgd-ssh-probe" style={{ marginBottom: 16 }}>
+            <div className="sgd-ssh-probe__label">Verified server response (<code>pwd &amp;&amp; whoami</code>)</div>
+            <pre className="sgd-ssh-probe__output">{testOutput}</pre>
+          </div>
+        )}
+        <button className="sgd-btn sgd-btn--primary" onClick={() => onComplete(rotatedProfile)}>
+          Done
+        </button>
+      </div>
+    );
+  }
+
+  // ── Main flow: addkey (+ testing/committing overlay) ──────────────────────
+  const busy = testStatus === 'testing' || committing;
+
+  return (
+    <div className="sgd-detail__edit-form">
+      <SectionTitle>Regenerate SSH key</SectionTitle>
+
+      <div className="sgd-alert sgd-alert--warning" style={{ marginBottom: 16 }}>
+        <strong>Your current SSH key is still active.</strong> It will only be
+        deleted after the new key is verified and the profile is saved.
+        You can cancel at any time with no impact to your existing setup.
+      </div>
+
+      <p style={{ fontSize: 13, color: '#495057', marginBottom: 12 }}>
+        A new key pair has been generated. Add the public key to SiteGround,
+        then test the connection to confirm it works before we swap it in.
+      </p>
+
+      <CopyableCode
+        value={publicKey || ''}
+        label="New public key — copy this entire value"
+      />
+
+      <div className="sgd-steps-list" style={{ marginTop: 16, marginBottom: 16 }}>
+        <div className="sgd-steps-list__item">
+          <div className="sgd-steps-list__num">1</div>
+          <div>
+            <strong>Open SiteGround Site Tools → Devs → SSH Keys Manager</strong>
+            <p>Select the <strong>Import</strong> tab, enter a name (e.g. "Local Deploy"), and paste the key above into the <strong>Public Key</strong> field.</p>
+          </div>
+        </div>
+        <div className="sgd-steps-list__item">
+          <div className="sgd-steps-list__num">2</div>
+          <div>
+            <strong>Activate the key</strong>
+            <p>After saving, confirm it shows as <strong>Active</strong> in the list. An inactive key will be rejected.</p>
+          </div>
+        </div>
+        <div className="sgd-steps-list__item">
+          <div className="sgd-steps-list__num">3</div>
+          <div>
+            <strong>Check the box below and test</strong>
+            <p>The test uses the <em>new</em> key — if it passes, the profile is updated and the old key is removed.</p>
+          </div>
+        </div>
+      </div>
+
+      {testStatus === 'failed' && testError && (
+        <div className="sgd-alert sgd-alert--danger" style={{ marginBottom: 12 }}>
+          <strong>Connection failed:</strong> {testError}
+          <div style={{ marginTop: 6, fontSize: 12 }}>
+            Make sure the key is <strong>Active</strong> in SiteGround's SSH Keys Manager, then try again.
+          </div>
+        </div>
+      )}
+
+      {testOutput && testStatus !== 'failed' && (
+        <div className="sgd-ssh-probe" style={{ marginBottom: 12 }}>
+          <div className="sgd-ssh-probe__label">Server response (<code>pwd &amp;&amp; whoami</code>)</div>
+          <pre className="sgd-ssh-probe__output">{testOutput}</pre>
+        </div>
+      )}
+
+      <label className="sgd-checkbox-label" style={{ marginBottom: 16 }}>
+        <input
+          type="checkbox"
+          checked={addConfirmed}
+          onChange={(e) => setAddConfirmed(e.target.checked)}
+          disabled={busy}
+        />
+        I have added the new key to SiteGround and it is <strong>Active</strong>.
+      </label>
+
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button
+          className="sgd-btn sgd-btn--primary"
+          onClick={runTest}
+          disabled={!addConfirmed || busy}
+        >
+          {testStatus === 'testing'
+            ? <><span className="sgd-spinner sgd-spinner--sm" style={{ marginRight: 6 }} />Testing…</>
+            : committing
+              ? <><span className="sgd-spinner sgd-spinner--sm" style={{ marginRight: 6 }} />Saving…</>
+              : testStatus === 'failed'
+                ? 'Test again'
+                : '▶ Test & activate new key'}
+        </button>
+        <button
+          className="sgd-btn sgd-btn--secondary"
+          onClick={handleCancel}
+          disabled={busy}
+        >
+          Cancel
+        </button>
+        <span style={{ fontSize: 12, color: '#6c757d' }}>
+          {!addConfirmed
+            ? 'Check the confirmation box above to enable the test.'
+            : testStatus === 'failed'
+              ? 'Check that the key is Active in SiteGround, then test again.'
+              : 'Connection test verifies the new key works before committing the swap.'}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function ProfileDetail({ profileId, onDeploy, onViewLogs, onBack, onCloned }) {
   const [profile,     setProfile]     = useState(null);
   const [loading,     setLoading]     = useState(true);
   const [loadErr,     setLoadErr]     = useState(null);
-  const [mode,        setMode]        = useState('view'); // view | edit | delete | clone
+  const [mode,        setMode]        = useState('view'); // view | edit | delete | clone | regenkey
   const [siteName,    setSiteName]    = useState(null);
 
   const load = useCallback(async () => {
@@ -652,12 +914,14 @@ export default function ProfileDetail({ profileId, onDeploy, onViewLogs, onBack,
     <div className="sgd-detail">
       {/* ── Page header ───────────────────────────────────────────────────── */}
       <div className="sgd-detail__header">
-        <button className="sgd-btn sgd-btn--secondary sgd-btn--sm" onClick={onBack}>
-          ← Profiles
-        </button>
-        <div className="sgd-detail__title-block">
-          <h2 className="sgd-detail__title">{profile.name}</h2>
-          <span className="sgd-detail__subtitle">{profile.remoteWebRoot}</span>
+        <div className="sgd-detail__header-top">
+          <button className="sgd-btn sgd-btn--secondary sgd-btn--sm" onClick={onBack}>
+            ← Profiles
+          </button>
+          <div className="sgd-detail__title-block">
+            <h2 className="sgd-detail__title">{profile.name}</h2>
+            <span className="sgd-detail__subtitle">{profile.remoteWebRoot}</span>
+          </div>
         </div>
         {mode === 'view' && (
           <div className="sgd-detail__header-actions">
@@ -666,6 +930,9 @@ export default function ProfileDetail({ profileId, onDeploy, onViewLogs, onBack,
             </button>
             <button className="sgd-btn sgd-btn--ghost sgd-btn--sm" onClick={() => setMode('edit')}>
               Edit
+            </button>
+            <button className="sgd-btn sgd-btn--ghost sgd-btn--sm" onClick={() => setMode('regenkey')}>
+              Regen key
             </button>
             <button className="sgd-btn sgd-btn--danger sgd-btn--sm" onClick={() => setMode('delete')}>
               Delete
@@ -746,6 +1013,18 @@ export default function ProfileDetail({ profileId, onDeploy, onViewLogs, onBack,
         <DeletePanel
           profile={profile}
           onDeleted={onBack}
+          onCancel={() => setMode('view')}
+        />
+      )}
+
+      {/* ── Regenerate SSH key mode ────────────────────────────────────────── */}
+      {mode === 'regenkey' && (
+        <RegenerateKeyPanel
+          profile={profile}
+          onComplete={(updatedProfile) => {
+            if (updatedProfile) setProfile(updatedProfile);
+            setMode('view');
+          }}
           onCancel={() => setMode('view')}
         />
       )}

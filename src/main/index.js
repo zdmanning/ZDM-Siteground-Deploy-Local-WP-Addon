@@ -102,6 +102,39 @@ module.exports = function (context) {
     return keyManager.deleteOrphanedKeys(knownKeyIds);
   });
 
+  /**
+   * Rotate the SSH key pair for a profile.
+   *
+   * Safety contract:
+   *   1. New key must already be generated + connection-tested by caller.
+   *   2. Profile record is updated atomically before any key deletion.
+   *   3. Old key is deleted ONLY after the profile record commits AND only
+   *      if no other profile still references that old keyId (clone safety).
+   */
+  ipcMain.handle('sgd:keys:rotate', async (_e, profileId, newKeyId) => {
+    const result = profileStore.rotateProfileKey(profileId, newKeyId);
+    if (!result.success) return result;
+
+    const { oldKeyId } = result.data;
+    let oldKeyDeleted = false;
+    if (oldKeyId && oldKeyId !== newKeyId) {
+      // Only delete old key if no other profile references it.
+      // Cloned profiles can share a keyId — deleting a shared key would break them.
+      const profilesResult = profileStore.getProfiles();
+      const stillInUse = profilesResult.success
+        ? profilesResult.data.some((p) => p.keyId === oldKeyId)
+        : true; // be conservative: if we can't check, keep the key
+
+      if (!stillInUse) {
+        const del = keyManager.deleteKeyPair(oldKeyId);
+        oldKeyDeleted = del.success === true;
+      }
+    }
+
+    // Augment result with oldKeyDeleted so the UI can show accurate feedback
+    return { ...result, data: { ...result.data, oldKeyDeleted } };
+  });
+
   // ─── SSH ───────────────────────────────────────────────────────────────────
 
   ipcMain.handle('sgd:ssh:test', async (_e, profileId) => {
@@ -192,6 +225,22 @@ module.exports = function (context) {
 
   ipcMain.handle('sgd:deploy:cancel', async (_e, profileId) => {
     return deployService.cancelDeploy(profileId);
+  });
+
+  ipcMain.handle('sgd:pull:code', async (event, profileId, options) => {
+    const profileResult = profileStore.getProfileById(profileId);
+    if (!profileResult.success) return profileResult;
+    return deployService.runCodePull(profileResult.data, options, (entry) => {
+      event.sender.send('sgd:log:entry', entry);
+    });
+  });
+
+  ipcMain.handle('sgd:pull:db', async (event, profileId, options) => {
+    const profileResult = profileStore.getProfileById(profileId);
+    if (!profileResult.success) return profileResult;
+    return deployService.runDbPull(profileResult.data, options, (entry) => {
+      event.sender.send('sgd:log:entry', entry);
+    });
   });
 
   // ─── Settings ───────────────────────────────────────────────────────────────

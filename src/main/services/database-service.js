@@ -330,6 +330,114 @@ async function uploadSqlFile(profile, localSqlPath, remoteSqlPath, onLog) {
   return _ok({ remoteSqlPath });
 }
 
+// ─── Local DB import ──────────────────────────────────────────────────────────────
+
+/**
+ * Import a SQL file into the local WordPress database.
+ * Tries WP-CLI first, then falls back to the mysql CLI.
+ *
+ * @param {string}   siteId
+ * @param {string}   sqlPath  Absolute path to the .sql file to import.
+ * @param {function} onLog
+ */
+async function importLocalDatabase(siteId, sqlPath, onLog) {
+  const wpRoot = localAdapter.getSiteWpPath(siteId);
+  if (!wpRoot || !fs.existsSync(wpRoot)) {
+    return _err(`WordPress root not found for site "${siteId}".`);
+  }
+  if (!fs.existsSync(sqlPath)) {
+    return _err(`SQL file not found: ${sqlPath}`);
+  }
+
+  _emit('info', 'Importing database into local site…', onLog);
+
+  // Try WP-CLI first
+  let res = await _run(
+    `wp db import ${_lq(sqlPath)} --path=${_lq(wpRoot)} --allow-root`,
+    { cwd: wpRoot }
+  );
+
+  if (res.exitCode === 0) {
+    _emit('success', 'Local database imported via WP-CLI', onLog);
+    return _ok({ method: 'wp-cli' });
+  }
+
+  _emit('warning', `  WP-CLI import failed: ${(res.stderr || res.stdout).trim()}`, onLog);
+  _emit('info',    '  Falling back to mysql CLI…', onLog);
+
+  const creds = _parseWpConfig(wpRoot);
+  if (!creds) {
+    return _err('Cannot parse wp-config.php to obtain local database credentials.');
+  }
+
+  const localPort = siteId ? localAdapter.getSiteMysqlPort(siteId) : null;
+  if (localPort) {
+    creds.dbHost = '127.0.0.1';
+    creds.dbPort = String(localPort);
+  }
+
+  const pwArg = creds.dbPassword ? `-p"${creds.dbPassword.replace(/"/g, '')}"` : '';
+  const cmd = [
+    'mysql',
+    `-h"${creds.dbHost}"`,
+    `-P${creds.dbPort}`,
+    `-u"${creds.dbUser}"`,
+    pwArg,
+    `"${creds.dbName}"`,
+    `< ${_lq(sqlPath)}`,
+  ].filter(Boolean).join(' ');
+
+  res = await _run(cmd, { cwd: wpRoot });
+  if (res.exitCode !== 0) {
+    const summary = (res.stderr || res.stdout).trim().split('\n').slice(-3).join(' | ');
+    return _err(
+      'Local database import failed. Neither WP-CLI nor mysql CLI succeeded.\n' +
+      `mysql error: ${summary}`
+    );
+  }
+
+  _emit('success', 'Local database imported via mysql CLI', onLog);
+  return _ok({ method: 'mysql-cli' });
+}
+
+// ─── Local search-replace ───────────────────────────────────────────────────────
+
+/**
+ * Run `wp search-replace` locally to swap the production domain for the local
+ * dev domain after a DB pull.
+ *
+ * @param {string}   siteId
+ * @param {string}   productionDomain  e.g. "https://example.com"
+ * @param {string}   localDomain       e.g. "http://mysite.local"
+ * @param {function} onLog
+ */
+async function runLocalSearchReplace(siteId, productionDomain, localDomain, onLog) {
+  const wpRoot = localAdapter.getSiteWpPath(siteId);
+  if (!wpRoot || !fs.existsSync(wpRoot)) {
+    return _err(`WordPress root not found for site "${siteId}".`);
+  }
+
+  _emit('info', `Search-replace: ${productionDomain} → ${localDomain}`, onLog);
+
+  const res = await _run(
+    `wp search-replace ${_lq(productionDomain)} ${_lq(localDomain)} ` +
+    `--all-tables --precise --recurse-objects --skip-plugins --skip-themes ` +
+    `--path=${_lq(wpRoot)} --allow-root`,
+    { cwd: wpRoot }
+  );
+
+  if (res.exitCode !== 0) {
+    const summary = (res.stderr || res.stdout).trim().split('\n').slice(-3).join(' | ');
+    _emit('warning', `Local search-replace failed (exit ${res.exitCode}): ${summary}`, onLog);
+    // Non-fatal — site still works; URLs will just point to production temporarily
+    return _ok({ skipped: true, reason: summary });
+  }
+
+  const summary = (res.stdout || '').trim().split('\n').filter(Boolean).slice(-3).join(' | ');
+  _emit('success', `Search-replace done: ${summary}`, onLog);
+  return _ok({});
+}
+
 // ─── Remote credential reader ────────────────────────────────────────────────────
 
 async function _readRemoteWpCredsViaWpCli(sshConn, webRoot) {
@@ -980,7 +1088,9 @@ module.exports = {
 
   // Local operations
   exportLocalDatabase,
+  importLocalDatabase,
   getLocalTablePrefix,
+  runLocalSearchReplace,
 
   // Remote operations
   uploadSqlFile,

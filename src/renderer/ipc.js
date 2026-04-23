@@ -36,6 +36,14 @@ export const keyExists             = (keyId) => ipcRenderer.invoke('sgd:keys:exi
 export const deleteKey             = (keyId) => ipcRenderer.invoke('sgd:keys:delete',    keyId);
 export const deleteOrphanedKeys    = ()      => ipcRenderer.invoke('sgd:keys:deleteOrphaned');
 
+/**
+ * Atomically rotate the SSH key pair for a saved profile.
+ * The new key must already be generated and connection-tested before calling.
+ * The main process deletes the old key after committing (if not shared with a clone).
+ */
+export const rotateProfileKey = (profileId, newKeyId) =>
+  ipcRenderer.invoke('sgd:keys:rotate', profileId, newKeyId);
+
 // ─── SSH ──────────────────────────────────────────────────────────────────────
 
 /**
@@ -68,6 +76,12 @@ export const runDbDeploy = (profileId, options) =>
 
 export const cancelDeploy = (profileId) =>
   ipcRenderer.invoke('sgd:deploy:cancel', profileId);
+
+export const runCodePull = (profileId, options) =>
+  ipcRenderer.invoke('sgd:pull:code', profileId, options);
+
+export const runDbPull = (profileId, options) =>
+  ipcRenderer.invoke('sgd:pull:db', profileId, options);
 
 export const deleteRemoteBackups = (profileId) =>
   ipcRenderer.invoke('sgd:deploy:delete-backups', profileId);

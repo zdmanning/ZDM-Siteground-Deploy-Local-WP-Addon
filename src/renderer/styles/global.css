@@ -101,6 +101,7 @@
 .sgd-btn--primary   { background: #910C1D; color: #fff; }
 .sgd-btn--secondary { background: #e2e6ea; color: #292929; }
 .sgd-btn--danger    { background: #dc3545; color: #fff; }
+.sgd-btn--warning   { background: #c47a00; color: #fff; }
 .sgd-btn--ghost     { background: transparent; color: #910C1D; border: 1px solid #910C1D; }
 .sgd-btn--sm        { padding: 4px 10px; font-size: 11px; }
 .sgd-btn--xs        { padding: 2px 7px; font-size: 10px; }
@@ -913,9 +914,20 @@ code.sgd-profile-card__info-val {
 
 .sgd-detail__header {
   display: flex;
+  flex-direction: column;
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.sgd-detail__header-top {
+  display: flex;
   align-items: flex-start;
   gap: 12px;
-  margin-bottom: 18px;
+}
+
+.sgd-detail__header-top > .sgd-btn {
+  flex-shrink: 0;
+  margin-top: 2px;
 }
 
 .sgd-detail__title-block {
@@ -936,13 +948,13 @@ code.sgd-profile-card__info-val {
 .sgd-detail__subtitle {
   font-size: 12px;
   color: #6c757d;
+  word-break: break-all;
 }
 
 .sgd-detail__header-actions {
   display: flex;
   gap: 6px;
-  flex-shrink: 0;
-  padding-top: 2px;
+  justify-content: flex-end;
 }
 
 /* ── Section title ─────────────────────────────────────────────────────────── */
@@ -1383,6 +1395,67 @@ code.sgd-profile-card__info-val {
 }
 .sgd-btn--danger:hover:not(:disabled) { background: #c82333; }
 .sgd-btn--danger:disabled { background: #e9acb0; color: #fff; cursor: not-allowed; }
+
+/* ── Warning button ────────────────────────────────────────────────────────── */
+.sgd-btn--warning {
+  background: #c47a00;
+  color: #fff;
+  border: none;
+}
+.sgd-btn--warning:hover:not(:disabled) { background: #a86800; }
+.sgd-btn--warning:disabled { background: #e2c07a; color: #fff; cursor: not-allowed; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Direction Toggle  (Push ↑ / Pull ↓)
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.sgd-direction-toggle {
+  display: flex;
+  gap: 0;
+  margin-bottom: 16px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 2px solid #dee2e6;
+}
+
+.sgd-direction-toggle__btn {
+  flex: 1;
+  padding: 9px 16px;
+  background: #f8f9fa;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: #495057;
+  transition: background 0.15s, color 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.sgd-direction-toggle__btn + .sgd-direction-toggle__btn {
+  border-left: 2px solid #dee2e6;
+}
+
+.sgd-direction-toggle__btn:hover {
+  background: #e9ecef;
+}
+
+.sgd-direction-toggle__btn--active {
+  background: #910C1D;
+  color: #fff;
+  font-weight: 600;
+}
+
+.sgd-direction-toggle__btn--pull.sgd-direction-toggle__btn--active {
+  background: #c47a00;
+}
+
+.sgd-direction-toggle__arrow {
+  font-size: 15px;
+  line-height: 1;
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Deploy Mode Tabs
