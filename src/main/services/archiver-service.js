@@ -41,11 +41,13 @@ function _err(error) { return { success: false, error }; }
  * Create a zip or tar archive from an array of source directory descriptors.
  *
  * @param {Array<{ localPath: string, archiveName: string }>} sourceItems
- * @param {string}   destPath     Absolute path for the output archive file.
- * @param {string}   [format]     'zip' (default) or 'tar'.
- * @param {function} [onProgress] Called with { bytes, total } during write.
+ * @param {string}   destPath        Absolute path for the output archive file.
+ * @param {string}   [format]        'zip' (default) or 'tar'.
+ * @param {function} [onProgress]    Called with { bytes, total } during write.
+ * @param {string[]} [excludeFolders] Top-level folder names to exclude from every
+ *                                    source item (e.g. ['.git', '.vscode']).
  */
-function createArchive(sourceItems, destPath, format, onProgress) {
+function createArchive(sourceItems, destPath, format, onProgress, excludeFolders = []) {
   // Support legacy 3-arg calls where format was omitted and onProgress was 3rd arg
   if (typeof format === 'function') {
     onProgress = format;
@@ -118,13 +120,24 @@ function createArchive(sourceItems, destPath, format, onProgress) {
 
     archive.pipe(output);
 
+    const excludeSet = new Set(excludeFolders);
+
     for (const item of sourceItems) {
       if (!fs.existsSync(item.localPath)) {
         // Caller already validated — silently skip anything that disappeared
         continue;
       }
-      // false = use archiveName as the directory name inside the zip
-      archive.directory(item.localPath, item.archiveName);
+      if (excludeSet.size > 0) {
+        // Filter out any entry whose first path segment is an excluded folder
+        // (e.g. '.git/config' → first segment '.git' → excluded)
+        archive.directory(item.localPath, item.archiveName, (entry) => {
+          const firstSegment = entry.name.split('/')[0];
+          return excludeSet.has(firstSegment) ? false : entry;
+        });
+      } else {
+        // false = use archiveName as the directory name inside the zip
+        archive.directory(item.localPath, item.archiveName);
+      }
     }
 
     archive.finalize();

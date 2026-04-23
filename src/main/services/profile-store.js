@@ -104,11 +104,13 @@ function _deriveProductionDomain(webRoot) {
 function _applyDefaults(data) {
   const prodDomain = _deriveProductionDomain(data.remoteWebRoot);
   return {
-    localSiteId:      null,
-    deployMode:       { defaultMode: 'code' },
-    confirmDefault:   null,
-    lastDeployedAt:   null,
-    meta:             {},
+    localSiteId:         null,
+    deployMode:          { defaultMode: 'code' },
+    confirmDefault:      null,
+    deployIncludeGit:    false,
+    deployIncludeVscode: false,
+    lastDeployedAt:      null,
+    meta:                {},
     ...data,
     productionDomain: data.productionDomain || prodDomain,
   };

@@ -392,13 +392,15 @@ function DeletePanel({ profile, onDeleted, onCancel }) {
 function EditForm({ profile, onSaved, onCancel }) {
   const [fields, setFields] = useState({
     name:             profile.name             || '',
-    sshHost:          profile.sshHost          || '',
-    sshPort:          String(profile.sshPort   || 18765),
-    sshUser:          profile.sshUser          || '',
-    remoteWebRoot:    profile.remoteWebRoot     || '',
-    productionDomain: profile.productionDomain || '',
-    deployMode:       profile.deployMode?.defaultMode || 'code',
-    confirmDefault:   profile.confirmDefault !== undefined ? profile.confirmDefault : null,
+    sshHost:             profile.sshHost          || '',
+    sshPort:             String(profile.sshPort   || 18765),
+    sshUser:             profile.sshUser          || '',
+    remoteWebRoot:       profile.remoteWebRoot     || '',
+    productionDomain:    profile.productionDomain || '',
+    deployMode:          profile.deployMode?.defaultMode || 'code',
+    confirmDefault:      profile.confirmDefault !== undefined ? profile.confirmDefault : null,
+    deployIncludeGit:    Boolean(profile.deployIncludeGit),
+    deployIncludeVscode: Boolean(profile.deployIncludeVscode),
   });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
@@ -415,14 +417,16 @@ function EditForm({ profile, onSaved, onCancel }) {
     setErrors({});
 
     const patch = {
-      name:             fields.name.trim(),
-      sshHost:          fields.sshHost.trim(),
-      sshPort:          Number(fields.sshPort) || 18765,
-      sshUser:          fields.sshUser.trim(),
-      remoteWebRoot:    fields.remoteWebRoot.trim(),
-      productionDomain: fields.productionDomain.trim(),
-      deployMode:       { defaultMode: fields.deployMode },
-      confirmDefault:   fields.confirmDefault,
+      name:                fields.name.trim(),
+      sshHost:             fields.sshHost.trim(),
+      sshPort:             Number(fields.sshPort) || 18765,
+      sshUser:             fields.sshUser.trim(),
+      remoteWebRoot:       fields.remoteWebRoot.trim(),
+      productionDomain:    fields.productionDomain.trim(),
+      deployMode:          { defaultMode: fields.deployMode },
+      confirmDefault:      fields.confirmDefault,
+      deployIncludeGit:    fields.deployIncludeGit,
+      deployIncludeVscode: fields.deployIncludeVscode,
     };
 
     const res = await updateProfile(profile.id, patch);
@@ -539,6 +543,25 @@ function EditForm({ profile, onSaved, onCancel }) {
           <option value="checked">Always pre-checked for this profile</option>
           <option value="unchecked">Always unchecked for this profile</option>
         </select>
+      </FormField>
+
+      <FormField id="pd-deploy-opts" label="Deploy options" hint="These folders are excluded from all deploys by default for safety">
+        <label className="sgd-checkbox-label" style={{ marginBottom: 6 }}>
+          <input
+            type="checkbox"
+            checked={fields.deployIncludeGit}
+            onChange={(e) => set('deployIncludeGit', e.target.checked)}
+          />
+          Include <code>.git</code> folder in deploys <em>(not recommended)</em>
+        </label>
+        <label className="sgd-checkbox-label">
+          <input
+            type="checkbox"
+            checked={fields.deployIncludeVscode}
+            onChange={(e) => set('deployIncludeVscode', e.target.checked)}
+          />
+          Include <code>.vscode</code> folder in deploys <em>(not recommended)</em>
+        </label>
       </FormField>
 
       {saveErr && (

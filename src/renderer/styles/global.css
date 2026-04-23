@@ -699,7 +699,8 @@
 }
 
 .sgd-checkbox-label input[type="checkbox"] {
-  margin-top: 1px;
+  width: auto;
+  margin-top: 2px;
   flex-shrink: 0;
   cursor: pointer;
   accent-color: #910C1D;

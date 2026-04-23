@@ -305,6 +305,12 @@ async function runCodeDeploy(profile, options = {}, onLog) {
     const localArchivePath = archiverSvc.getTempArchivePath(runId, archiveFormat);
     emit('info', `Creating ${archiveFormat.toUpperCase()} archive…`);
 
+    // Build exclude list — .git and .vscode are excluded unless the profile
+    // explicitly opts in via deployIncludeGit / deployIncludeVscode.
+    const excludeFolders = [];
+    if (!profile.deployIncludeGit)    excludeFolders.push('.git');
+    if (!profile.deployIncludeVscode) excludeFolders.push('.vscode');
+
     let lastLoggedBucket = -1;
     const archiveResult = await archiverSvc.createArchive(
       sourceItems,
@@ -318,7 +324,8 @@ async function runCodeDeploy(profile, options = {}, onLog) {
             emit('info', `  Archiving… ${_fmt(bytes)} / ${_fmt(total)}`);
           }
         }
-      }
+      },
+      excludeFolders
     );
 
     if (!archiveResult.success) {
@@ -408,11 +415,12 @@ async function runCodeDeploy(profile, options = {}, onLog) {
 
       emit('info', `Syncing ${target}…`);
 
+      const rsyncExcludes = excludeFolders.map((f) => `--exclude=${_q(f)}`).join(' ');
       const syncCmd = [
         // Ensure parent dir exists (needed when syncing sub-paths like plugins/woocommerce)
         `mkdir -p ${_q(destParent)};`,
         `if command -v rsync > /dev/null 2>&1; then`,
-        `  rsync -az --delete --exclude='.git' ${_q(srcDir + '/')} ${_q(destDir + '/')};`,
+        `  rsync -az --delete ${rsyncExcludes} ${_q(srcDir + '/')} ${_q(destDir + '/')};`,
         `else`,
         `  rm -rf ${_q(destDir)} && cp -rp ${_q(srcDir)} ${_q(destParent + '/')};`,
         `fi`,
@@ -625,6 +633,11 @@ async function runFullDeploy(profile, options = {}, onLog) {
     const localArchivePath = archiverSvc.getTempArchivePath(runId, archiveFormat);
     emit('info', `── Creating ${archiveFormat.toUpperCase()} archive of entire wp-content…`);
 
+    // Build exclude list — same safety defaults as code deploy
+    const excludeFolders = [];
+    if (!profile.deployIncludeGit)    excludeFolders.push('.git');
+    if (!profile.deployIncludeVscode) excludeFolders.push('.vscode');
+
     let lastBucket = -1;
     const archiveResult = await archiverSvc.createArchive(
       sourceItems,
@@ -638,7 +651,8 @@ async function runFullDeploy(profile, options = {}, onLog) {
             emit('info', `  Archiving… ${_fmt(bytes)} / ${_fmt(total)}`);
           }
         }
-      }
+      },
+      excludeFolders
     );
 
     if (!archiveResult.success) return _err(`Archive failed: ${archiveResult.error}`);
@@ -754,9 +768,10 @@ async function runFullDeploy(profile, options = {}, onLog) {
       const srcDir  = `${remoteTempDir}/${subDir}`;
       const destDir = `${remoteWebRoot}/wp-content/${subDir}`;
       emit('info', `  Syncing ${subDir}…`);
+      const rsyncExcludes = excludeFolders.map((f) => `--exclude=${_q(f)}`).join(' ');
       const syncCmd = [
         `if command -v rsync > /dev/null 2>&1; then`,
-        `  rsync -az --delete --exclude='.git' ${_q(srcDir + '/')} ${_q(destDir + '/')};`,
+        `  rsync -az --delete ${rsyncExcludes} ${_q(srcDir + '/')} ${_q(destDir + '/')};`,
         `else`,
         `  rm -rf ${_q(destDir)} && cp -rp ${_q(srcDir)} ${_q(remoteWebRoot + '/wp-content/')};`,
         `fi`,
