@@ -925,11 +925,11 @@ export default function ProfileDetail({ profileId, onDeploy, onViewLogs, onBack,
         </div>
         {mode === 'view' && (
           <div className="sgd-detail__header-actions">
-            <button className="sgd-btn sgd-btn--ghost sgd-btn--sm" onClick={() => setMode('clone')}>
-              Clone
-            </button>
             <button className="sgd-btn sgd-btn--ghost sgd-btn--sm" onClick={() => setMode('edit')}>
               Edit
+            </button>
+            <button className="sgd-btn sgd-btn--ghost sgd-btn--sm" onClick={() => setMode('clone')}>
+              Clone
             </button>
             <button className="sgd-btn sgd-btn--ghost sgd-btn--sm" onClick={() => setMode('regenkey')}>
               Regen key
