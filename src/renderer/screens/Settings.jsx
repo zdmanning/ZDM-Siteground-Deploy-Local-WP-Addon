@@ -170,7 +170,7 @@ export default function Settings({ onBack }) {
         <div>
           <div className="sgd-card">
             <p style={{ margin: '0 0 6px', fontWeight: 700, fontSize: 14 }}>SiteGround Deploy for Local WP</p>
-            <p style={{ margin: '0 0 4px', fontSize: 12, color: '#6c757d' }}>Version 1.0.0</p>
+            <p style={{ margin: '0 0 4px', fontSize: 12, color: '#6c757d' }}>Version 1.2.0</p>
           </div>
 
           <div className="sgd-card">
@@ -244,7 +244,7 @@ export default function Settings({ onBack }) {
       {activeTab === 'settings' && (<>
 
       <div className="sgd-card">
-        <div className="sgd-card__title">SiteGround Deploy v1.0.0</div>
+        <div className="sgd-card__title">SiteGround Deploy v1.2.0</div>
         <div className="sgd-card__meta" style={{ marginTop: 4 }}>
           Deploy Local WordPress sites to SiteGround via SSH.
         </div>

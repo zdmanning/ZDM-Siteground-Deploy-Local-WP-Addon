@@ -1,14 +1,14 @@
 {
   "name": "local-addon-siteground-deploy",
   "productName": "SiteGround Deploy",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "author": "ZDM Designs",
   "description": "Deploy Local WordPress sites to SiteGround via SSH.",
   "keywords": [
     "local-addon"
   ],
   "slug": "siteground-deploy",
-  "bgColor": "#EF5B25",
+  "bgColor": "#000000",
   "icon": "icon.svg",
   "main": "lib/main.js",
   "renderer": "lib/renderer.js",
